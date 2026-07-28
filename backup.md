@@ -203,6 +203,8 @@ Stock adjustments use a database row lock in PostgreSQL so simultaneous updates 
 
 PostgreSQL date values are normalized to `YYYY-MM-DD` before reaching the browser, and the frontend also accepts full ISO timestamps. This prevents expiry-date formatting errors from crashing the Inventory page. A top-level React recovery screen replaces an empty white page if an unexpected render error occurs in the future.
 
+The HTML entry point is served with `no-cache` while hashed Vite assets are cached as immutable. This ensures Railway deployments are picked up immediately without sacrificing asset performance.
+
 ## API routes
 
 - `GET /api/health`: returns `{ ok: true }` if the server and store initialized.

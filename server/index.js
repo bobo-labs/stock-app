@@ -194,8 +194,17 @@ app.get('/api/pos/terminal', async (_req, res, next) => {
 
 app.use('/api', (_req, res) => res.status(404).json({ error: 'API route not found.' }))
 
-app.use(express.static(path.join(root, 'dist'), { maxAge: '1h' }))
-app.get('/{*splat}', (_req, res) => res.sendFile(path.join(root, 'dist', 'index.html')))
+const distPath = path.join(root, 'dist')
+app.use(express.static(distPath, {
+  index: false,
+  maxAge: '1h',
+  setHeaders: (res, filePath) => {
+    if (filePath.includes(`${path.sep}assets${path.sep}`)) res.setHeader('Cache-Control', 'public, max-age=31536000, immutable')
+  },
+}))
+app.get('/{*splat}', (_req, res) => res.sendFile(path.join(distPath, 'index.html'), {
+  headers: { 'Cache-Control': 'no-cache, no-store, must-revalidate' },
+}))
 
 app.use((error, _req, res, _next) => {
   console.error(error)
