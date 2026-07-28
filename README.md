@@ -5,6 +5,7 @@ A responsive, touch-friendly bakery inventory and point-of-sale application. Spa
 ## Features
 
 - Add and edit products, prices, sale availability, low-stock thresholds, SKUs, and expiry dates.
+- Permanently remove discontinued products while retaining historical sales and activity.
 - Record stock in, stock out, count corrections, and a complete movement trail.
 - Build a cart from sellable products currently in stock.
 - Record cash sales immediately.

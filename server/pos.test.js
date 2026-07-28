@@ -26,6 +26,10 @@ test('cash and card sales update stock exactly once', async () => {
     const card = await store.createSale([{ itemId: product.id, quantity: 3 }], 'card')
     assert.equal(card.status, 'pending')
     assert.equal((await store.listItems())[0].quantity, 5)
+    await assert.rejects(
+      () => store.deleteItem(product.id),
+      (error) => error.status === 409,
+    )
 
     const order = {
       id: `MOCK-${card.id}`, status: 'canceled', status_detail: 'canceled',
@@ -40,6 +44,12 @@ test('cash and card sales update stock exactly once', async () => {
     await store.updateSaleFromPoint(order)
     assert.equal((await store.listItems())[0].quantity, 8)
     assert.equal((await store.listSales()).length, 2)
+
+    const deleted = await store.deleteItem(product.id)
+    assert.equal(deleted.id, product.id)
+    assert.equal((await store.listItems()).length, 0)
+    assert.equal((await store.listSales())[0].items[0].name, 'Test croissant')
+    assert.equal((await store.listMovements())[0].itemId, null)
   } finally {
     await store.closeStore()
     await fs.rm(temporaryDirectory, { recursive: true, force: true })

@@ -23,6 +23,7 @@ export const api = {
   terminal: () => request('/api/pos/terminal'),
   createItem: (item) => request('/api/items', { method: 'POST', body: JSON.stringify(item) }),
   updateItem: (id, item) => request(`/api/items/${id}`, { method: 'PATCH', body: JSON.stringify(item) }),
+  deleteItem: (id) => request(`/api/items/${id}`, { method: 'DELETE' }),
   adjustItem: (id, adjustment) => request(`/api/items/${id}/adjust`, { method: 'POST', body: JSON.stringify(adjustment) }),
   cashSale: (items) => request('/api/sales/cash', { method: 'POST', body: JSON.stringify({ items }) }),
   cardSale: (items) => request('/api/sales/card', { method: 'POST', body: JSON.stringify({ items }) }),

@@ -99,6 +99,7 @@ The result is a warm bakery palette, cocoa primary actions, sage/amber/rose stat
 
 - Add a product.
 - Edit product details.
+- Permanently delete a product from the live inventory and catalog after confirmation.
 - Search by product name, category, or SKU.
 - Filter by all products, low stock, or category.
 - See available quantity and unit.
@@ -206,6 +207,7 @@ Stock adjustments use a database row lock in PostgreSQL so simultaneous updates 
 - `GET /api/items`: returns all products.
 - `POST /api/items`: creates a product and optionally records opening stock.
 - `PATCH /api/items/:id`: updates product details.
+- `DELETE /api/items/:id`: removes a product while preserving historical sale and movement snapshots. Deletion is blocked while the product belongs to a pending card sale.
 - `POST /api/items/:id/adjust`: records stock in, stock out, or an adjustment.
 - `GET /api/movements?limit=100`: returns recent stock movements.
 - `GET /api/sales`: returns recent sales with line items.

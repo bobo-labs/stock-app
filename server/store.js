@@ -134,7 +134,7 @@ export async function initializeStore() {
       CREATE TABLE IF NOT EXISTS sale_items (
         id UUID PRIMARY KEY,
         sale_id UUID NOT NULL REFERENCES sales(id) ON DELETE CASCADE,
-        item_id UUID NOT NULL REFERENCES items(id),
+        item_id UUID REFERENCES items(id) ON DELETE SET NULL,
         item_name TEXT NOT NULL,
         unit TEXT NOT NULL,
         quantity NUMERIC(12,2) NOT NULL CHECK (quantity > 0),
@@ -143,7 +143,7 @@ export async function initializeStore() {
       );
       CREATE TABLE IF NOT EXISTS movements (
         id UUID PRIMARY KEY,
-        item_id UUID NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+        item_id UUID REFERENCES items(id) ON DELETE SET NULL,
         item_name TEXT NOT NULL,
         type TEXT NOT NULL CHECK (type IN ('stock_in', 'stock_out', 'adjustment')),
         quantity NUMERIC(12,2) NOT NULL,
@@ -153,6 +153,25 @@ export async function initializeStore() {
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
       ALTER TABLE movements ADD COLUMN IF NOT EXISTS sale_id UUID REFERENCES sales(id) ON DELETE SET NULL;
+      ALTER TABLE sale_items ALTER COLUMN item_id DROP NOT NULL;
+      ALTER TABLE movements ALTER COLUMN item_id DROP NOT NULL;
+      DO $$
+      BEGIN
+        IF EXISTS (
+          SELECT 1 FROM pg_constraint
+          WHERE conrelid = 'sale_items'::regclass AND conname = 'sale_items_item_id_fkey' AND confdeltype <> 'n'
+        ) THEN
+          ALTER TABLE sale_items DROP CONSTRAINT sale_items_item_id_fkey;
+          ALTER TABLE sale_items ADD CONSTRAINT sale_items_item_id_fkey FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE SET NULL;
+        END IF;
+        IF EXISTS (
+          SELECT 1 FROM pg_constraint
+          WHERE conrelid = 'movements'::regclass AND conname = 'movements_item_id_fkey' AND confdeltype <> 'n'
+        ) THEN
+          ALTER TABLE movements DROP CONSTRAINT movements_item_id_fkey;
+          ALTER TABLE movements ADD CONSTRAINT movements_item_id_fkey FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE SET NULL;
+        END IF;
+      END $$;
       CREATE INDEX IF NOT EXISTS movements_created_at_idx ON movements(created_at DESC);
       CREATE INDEX IF NOT EXISTS sales_created_at_idx ON sales(created_at DESC);
       CREATE INDEX IF NOT EXISTS sales_mp_order_id_idx ON sales(mp_order_id);
@@ -269,6 +288,49 @@ export async function updateItem(id, input) {
     [id, input.name, input.category, input.unit, input.lowStockThreshold, input.sku, input.expiryDate || null, input.price, input.sellable],
   )
   return rows[0] ? normalizeItem(rows[0]) : null
+}
+
+export async function deleteItem(id) {
+  if (!pool) {
+    return mutateFileData((data) => {
+      const index = data.items.findIndex((entry) => entry.id === id)
+      if (index === -1) return null
+      const pendingSale = data.sales.some((sale) => sale.status === 'pending' && sale.items.some((line) => line.itemId === id))
+      if (pendingSale) throw Object.assign(new Error('This product is reserved by a pending card sale and cannot be deleted yet.'), { status: 409 })
+      const [item] = data.items.splice(index, 1)
+      for (const movement of data.movements) if (movement.itemId === id) movement.itemId = null
+      for (const sale of data.sales) {
+        for (const line of sale.items) if (line.itemId === id) line.itemId = null
+      }
+      return normalizeItem(item)
+    })
+  }
+
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    const itemResult = await client.query('SELECT * FROM items WHERE id=$1 FOR UPDATE', [id])
+    if (!itemResult.rows[0]) {
+      await client.query('ROLLBACK')
+      return null
+    }
+    const pendingResult = await client.query(
+      `SELECT 1 FROM sale_items si JOIN sales s ON s.id=si.sale_id
+       WHERE si.item_id=$1 AND s.status='pending' LIMIT 1`,
+      [id],
+    )
+    if (pendingResult.rows[0]) {
+      throw Object.assign(new Error('This product is reserved by a pending card sale and cannot be deleted yet.'), { status: 409 })
+    }
+    await client.query('DELETE FROM items WHERE id=$1', [id])
+    await client.query('COMMIT')
+    return normalizeItem(itemResult.rows[0])
+  } catch (error) {
+    await client.query('ROLLBACK')
+    throw error
+  } finally {
+    client.release()
+  }
 }
 
 export async function adjustItem(id, input) {

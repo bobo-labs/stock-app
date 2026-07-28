@@ -96,8 +96,9 @@ function Modal({ title, eyebrow, onClose, children, wide = false, closeable = tr
   </div>
 }
 
-function ProductForm({ item, onSubmit, onClose, busy }) {
+function ProductForm({ item, onSubmit, onDelete, onClose, busy }) {
   const { t, categoryLabel, unitLabel } = useI18n()
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
   const [form, setForm] = useState({
     name: item?.name || '', category: item?.category || 'Bread', unit: item?.unit || 'pieces',
     quantity: item?.quantity ?? '', lowStockThreshold: item?.lowStockThreshold ?? '',
@@ -105,6 +106,13 @@ function ProductForm({ item, onSubmit, onClose, busy }) {
     price: item?.price || '', sellable: item?.sellable ?? true,
   })
   const update = (key) => (event) => setForm((current) => ({ ...current, [key]: event.target.value }))
+  if (confirmingDelete) return <div className="delete-confirmation">
+    <div className="delete-confirmation-icon"><Trash2 size={26} /></div>
+    <h3>{t('deleteProductQuestion')}</h3>
+    <p>{t('deleteProductDescription', { name: item.name })}</p>
+    {item.quantity > 0 && <div className="delete-stock-warning"><AlertTriangle size={18} /><span>{t('deleteProductStockWarning', { count: formatQuantity(item.quantity), unit: unitLabel(item.unit) })}</span></div>}
+    <div className="modal-actions"><button type="button" className="button secondary" onClick={() => setConfirmingDelete(false)} disabled={busy}>{t('keepProduct')}</button><button type="button" className="button danger-button" onClick={onDelete} disabled={busy}>{busy ? t('deleting') : t('deletePermanently')}<Trash2 size={18} /></button></div>
+  </div>
   return <form onSubmit={(event) => { event.preventDefault(); onSubmit(form) }} className="form-stack">
     <div className="field full"><label htmlFor="name">{t('productName')}</label><input id="name" autoFocus required value={form.name} onChange={update('name')} placeholder={t('productNamePlaceholder')} /></div>
     <div className="sellable-panel">
@@ -119,6 +127,7 @@ function ProductForm({ item, onSubmit, onClose, busy }) {
       <div className="field"><label htmlFor="expiry">{t('expiryDate')} <span>{t('optional')}</span></label><input id="expiry" type="date" value={form.expiryDate} onChange={update('expiryDate')} /></div>
       <div className="field"><label htmlFor="sku">{t('sku')} <span>{t('optional')}</span></label><input id="sku" value={form.sku} onChange={update('sku')} placeholder={t('skuPlaceholder')} /></div>
     </div>
+    {item && <button type="button" className="delete-product-link" onClick={() => setConfirmingDelete(true)}><Trash2 size={16} />{t('deleteProduct')}</button>}
     <div className="modal-actions"><button type="button" className="button secondary" onClick={onClose}>{t('cancel')}</button><button className="button primary" disabled={busy}>{busy ? t('saving') : item ? t('saveChanges') : t('addProduct')}<Check size={18} /></button></div>
   </form>
 }
@@ -441,6 +450,7 @@ export default function App() {
   }
   const addItem = (form) => perform(() => api.createItem(form), t('productAdded', { name: form.name }))
   const editItem = (item, form) => perform(() => api.updateItem(item.id, form), t('productUpdated', { name: form.name }))
+  const deleteItem = (item) => perform(() => api.deleteItem(item.id), t('productDeleted', { name: item.name }))
   const adjustItem = (item, form) => perform(() => api.adjustItem(item.id, form), t('stockUpdated', { name: item.name }))
   const nav = [
     { id: 'dashboard', label: t('overview'), icon: LayoutDashboard },
@@ -472,7 +482,7 @@ export default function App() {
     </main>
     <nav className="bottom-nav">{nav.map(({ id, label, icon: Icon }) => <button key={id} className={page === id ? 'active' : ''} onClick={() => setPage(id)}><Icon size={20} /><span>{label}</span></button>)}</nav>
     {modal?.type === 'add' && <Modal title={t('addProduct')} eyebrow={t('inventorySetup')} onClose={() => setModal(null)}><ProductForm onSubmit={addItem} onClose={() => setModal(null)} busy={busy} /></Modal>}
-    {modal?.type === 'edit' && <Modal title={modal.item.name} eyebrow={t('productDetails')} onClose={() => setModal(null)}><ProductForm item={modal.item} onSubmit={(form) => editItem(modal.item, form)} onClose={() => setModal(null)} busy={busy} /></Modal>}
+    {modal?.type === 'edit' && <Modal title={modal.item.name} eyebrow={t('productDetails')} onClose={() => setModal(null)}><ProductForm item={modal.item} onSubmit={(form) => editItem(modal.item, form)} onDelete={() => deleteItem(modal.item)} onClose={() => setModal(null)} busy={busy} /></Modal>}
     {modal?.type === 'adjust' && <Modal title={modal.item.name} eyebrow={t('updateStock')} onClose={() => setModal(null)}><AdjustForm item={modal.item} onSubmit={(form) => adjustItem(modal.item, form)} onClose={() => setModal(null)} busy={busy} /></Modal>}
     {toast && <div className={`toast ${toast.type}`} role="status"><div>{toast.type === 'success' ? <Check size={18} /> : <AlertTriangle size={18} />}</div><span>{toast.message}</span><button onClick={() => setToast(null)} aria-label={t('close')}><X size={16} /></button></div>}
   </div>

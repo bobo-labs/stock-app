@@ -8,7 +8,7 @@ import {
   pointConfiguration, validatePointWebhook,
 } from './mercadopago.js'
 import {
-  adjustItem, attachPointOrder, closeStore, createItem, createSale, getSale,
+  adjustItem, attachPointOrder, closeStore, createItem, createSale, deleteItem, getSale,
   getSaleByPointOrder, initializeStore, listItems, listMovements, listSales,
   markCardSaleFailed, updateItem, updateSaleFromPoint,
 } from './store.js'
@@ -104,6 +104,13 @@ app.post('/api/items', async (req, res, next) => {
 app.patch('/api/items/:id', async (req, res, next) => {
   try {
     const item = await updateItem(req.params.id, cleanItem(req.body, true))
+    if (!item) return res.status(404).json({ error: 'Product not found.' })
+    res.json(item)
+  } catch (error) { next(error) }
+})
+app.delete('/api/items/:id', async (req, res, next) => {
+  try {
+    const item = await deleteItem(req.params.id)
     if (!item) return res.status(404).json({ error: 'Product not found.' })
     res.json(item)
   } catch (error) { next(error) }
