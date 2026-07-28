@@ -364,9 +364,9 @@ h1, h2, h3, p { margin-top: 0; }
 .field input:focus, .field select:focus { border-color: #ab8d7b; box-shadow: 0 0 0 3px rgba(109, 69, 53, .08); }
 .field input::placeholder { color: #b4ada6; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 9px; margin-top: 24px; padding-top: 18px; border-top: 1px solid var(--line); }
-.delete-product-link { display: inline-flex; align-items: center; gap: 7px; margin-top: 20px; padding: 6px 0; color: var(--danger); font-size: 12px; font-weight: 700; }
+.delete-product-link { display: inline-flex; align-items: center; gap: 7px; margin-top: 20px; padding: 6px 0; border: 0; background: transparent; color: var(--danger); font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; appearance: none; text-align: left; }
 .delete-product-link:hover { color: #7f302b; }
-.delete-confirmation { padding: 8px 24px 0; text-align: center; }
+.delete-confirmation { padding: 8px 24px 24px; text-align: center; }
 .delete-confirmation-icon { display: grid; place-items: center; width: 52px; height: 52px; margin: 0 auto 14px; border-radius: 50%; color: var(--danger); background: var(--rose-soft); }
 .delete-confirmation h3 { margin: 0 0 8px; font-family: var(--display); font-size: 22px; }
 .delete-confirmation > p { max-width: 430px; margin: 0 auto; color: var(--muted); font-size: 13px; line-height: 1.6; }
