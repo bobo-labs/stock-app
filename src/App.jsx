@@ -7,6 +7,7 @@ import {
   SlidersHorizontal, Sparkles, Trash2, Wifi, X,
 } from 'lucide-react'
 import { api } from './api.js'
+import { dateOnly, parseCalendarDate } from './dates.js'
 import { useI18n } from './i18n.js'
 
 const categories = ['Bread', 'Pastries', 'Cakes', 'Ingredients', 'Packaging', 'Drinks', 'Other']
@@ -17,9 +18,10 @@ function formatQuantity(value) {
 }
 
 function daysUntil(dateValue) {
-  if (!dateValue) return null
+  const target = parseCalendarDate(dateValue)
+  if (!target) return null
   const today = new Date(); today.setHours(0, 0, 0, 0)
-  const target = new Date(`${dateValue}T00:00:00`)
+  target.setHours(0, 0, 0, 0)
   return Math.ceil((target - today) / 86400000)
 }
 
@@ -102,7 +104,7 @@ function ProductForm({ item, onSubmit, onDelete, onClose, busy }) {
   const [form, setForm] = useState({
     name: item?.name || '', category: item?.category || 'Bread', unit: item?.unit || 'pieces',
     quantity: item?.quantity ?? '', lowStockThreshold: item?.lowStockThreshold ?? '',
-    sku: item?.sku || '', expiryDate: item?.expiryDate?.slice(0, 10) || '',
+    sku: item?.sku || '', expiryDate: dateOnly(item?.expiryDate) || '',
     price: item?.price || '', sellable: item?.sellable ?? true,
   })
   const update = (key) => (event) => setForm((current) => ({ ...current, [key]: event.target.value }))

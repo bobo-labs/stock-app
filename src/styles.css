@@ -207,6 +207,11 @@ h1, h2, h3, p { margin-top: 0; }
 .pin-input:focus-within { border-color: #ab8d7b; box-shadow: 0 0 0 3px rgba(109,69,53,.08); }
 .pin-input input { width: 100%; border: 0; outline: 0; background: transparent; font-size: 18px; letter-spacing: .18em; }
 .login-card form > .button { width: 100%; margin-top: 18px; }
+.app-error-page { display: grid; min-height: 100vh; place-items: center; padding: 24px; background: radial-gradient(circle at 50% 0, rgba(213,190,166,.22), transparent 36%), var(--canvas); }
+.app-error-card { width: min(440px, 100%); padding: 38px; border: 1px solid var(--line); border-radius: 20px; background: var(--surface); box-shadow: var(--shadow-lg); text-align: center; }
+.app-error-icon { display: grid; width: 54px; height: 54px; margin: 0 auto 18px; place-items: center; border-radius: 50%; color: var(--danger); background: var(--rose-soft); }
+.app-error-card h1 { margin: 0 0 10px; font-size: 27px; letter-spacing: -.035em; }
+.app-error-card p { margin: 0 auto 22px; color: var(--muted); font-size: 13px; line-height: 1.6; }
 .inline-error { display: flex; align-items: center; gap: 7px; margin-top: 10px; color: var(--danger); font-size: 11px; }
 
 .sellable-panel { display: grid; grid-template-columns: minmax(0,1fr) 180px; align-items: center; gap: 16px; margin-bottom: 20px; padding: 14px; border: 1px solid var(--line); border-radius: 14px; background: #faf6f1; }

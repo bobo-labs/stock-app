@@ -2,6 +2,7 @@ import crypto from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import pg from 'pg'
+import { dateOnly } from '../src/dates.js'
 
 const { Pool } = pg
 const databaseUrl = process.env.DATABASE_URL
@@ -36,7 +37,7 @@ function normalizeItem(row) {
     quantity: Number(row.quantity),
     lowStockThreshold: Number(row.low_stock_threshold ?? row.lowStockThreshold ?? 0),
     sku: row.sku || '',
-    expiryDate: row.expiry_date ?? row.expiryDate ?? null,
+    expiryDate: dateOnly(row.expiry_date ?? row.expiryDate),
     price: Number(row.price || 0),
     sellable: Boolean(row.sellable),
     createdAt: row.created_at ?? row.createdAt,

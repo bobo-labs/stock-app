@@ -11,7 +11,7 @@
     "dev:server": "node --watch server/index.js",
     "build": "vite build",
     "start": "node server/index.js",
-    "check": "node --check server/index.js && node --check server/store.js && node --check server/mercadopago.js && node --check server/auth.js",
+    "check": "node --check server/index.js && node --check server/store.js && node --check server/mercadopago.js && node --check server/auth.js && node --check src/dates.js",
     "test": "node --test --test-concurrency=1 server/*.test.js"
   },
   "dependencies": {

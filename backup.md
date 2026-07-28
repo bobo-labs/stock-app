@@ -201,6 +201,8 @@ When `DATABASE_URL` is absent, the app uses a JSON file at `DATA_PATH`, or `data
 
 Stock adjustments use a database row lock in PostgreSQL so simultaneous updates to one product are handled safely.
 
+PostgreSQL date values are normalized to `YYYY-MM-DD` before reaching the browser, and the frontend also accepts full ISO timestamps. This prevents expiry-date formatting errors from crashing the Inventory page. A top-level React recovery screen replaces an empty white page if an unexpected render error occurs in the future.
+
 ## API routes
 
 - `GET /api/health`: returns `{ ok: true }` if the server and store initialized.

@@ -1,4 +1,5 @@
 import { createContext, createElement, useContext, useEffect, useMemo, useState } from 'react'
+import { parseCalendarDate } from './dates.js'
 
 const LanguageContext = createContext(null)
 const supportedLanguages = ['es', 'en']
@@ -9,6 +10,7 @@ const dictionaries = {
     overview: 'Resumen', sales: 'Ventas', inventory: 'Inventario', activity: 'Actividad',
     welcomeBack: 'Bienvenido de nuevo', loginDescription: 'Ingresa el código del personal para abrir el mostrador.', staffPin: 'Código de acceso',
     signingIn: 'Ingresando…', signIn: 'Ingresar', signOut: 'Cerrar sesión',
+    somethingWentWrong: 'Algo salió mal', unexpectedErrorDescription: 'No pudimos mostrar esta sección. Recarga la aplicación para continuar.', reloadApp: 'Recargar aplicación',
     liveInventory: 'Inventario en vivo', greetingMorning: 'Buenos días.', greetingAfternoon: 'Buenas tardes.', greetingEvening: 'Buenas noches.',
     welcomeMessage: 'Esto es lo que está pasando en tu panadería hoy.', addProduct: 'Agregar producto', add: 'Agregar', newSale: 'Nueva venta',
     salesToday: 'Ventas de hoy', transactionsToday: '{count} transacciones',
@@ -69,6 +71,7 @@ const dictionaries = {
     brandSubtitle: 'Counter dashboard', language: 'Language', openMenu: 'Open menu', preparing: 'Preparing your dashboard…', overview: 'Overview', sales: 'Sales', inventory: 'Inventory', activity: 'Activity',
     welcomeBack: 'Welcome back', loginDescription: 'Enter the staff access code to open the counter.', staffPin: 'Access code',
     signingIn: 'Signing in…', signIn: 'Sign in', signOut: 'Sign out',
+    somethingWentWrong: 'Something went wrong', unexpectedErrorDescription: 'We could not display this section. Reload the application to continue.', reloadApp: 'Reload application',
     liveInventory: 'Live inventory', greetingMorning: 'Good morning.', greetingAfternoon: 'Good afternoon.', greetingEvening: 'Good evening.',
     welcomeMessage: 'Here’s what’s happening across your bakery today.', addProduct: 'Add product', add: 'Add', newSale: 'New sale',
     salesToday: 'Sales today', transactionsToday: '{count} transactions',
@@ -143,7 +146,10 @@ export function LanguageProvider({ children }) {
       language, setLanguage, t,
       categoryLabel: (category) => dictionary.categories[category] ?? category,
       unitLabel: (unit) => dictionary.units[unit] ?? unit,
-      formatDate: (value) => new Intl.DateTimeFormat(language === 'es' ? 'es-CL' : 'en-US', { month: 'short', day: 'numeric' }).format(value instanceof Date ? value : new Date(`${value}T00:00:00`)),
+      formatDate: (value) => {
+        const date = parseCalendarDate(value)
+        return date ? new Intl.DateTimeFormat(language === 'es' ? 'es-CL' : 'en-US', { month: 'short', day: 'numeric' }).format(date) : '—'
+      },
       formatTime: (value) => new Intl.DateTimeFormat(language === 'es' ? 'es-CL' : 'en-US', { hour: 'numeric', minute: '2-digit' }).format(new Date(value)),
       formatCurrency: (value) => new Intl.NumberFormat(language === 'es' ? 'es-CL' : 'en-US', { style: 'currency', currency: 'CLP', maximumFractionDigits: 0 }).format(Number(value) || 0),
     }
