@@ -1,4 +1,4 @@
-# Bakery Stock — Project and Conversation Backup
+# Bakery POS — Project and Conversation Backup
 
 Updated: 2026-07-27
 
@@ -162,7 +162,9 @@ Important frontend files:
 Important backend files:
 
 - `server/index.js`: Express server, validation, API routes, static hosting, health check, and graceful shutdown.
-- `server/store.js`: PostgreSQL store with a local JSON fallback.
+- `server/store.js`: PostgreSQL store with a local JSON fallback, including atomic sale/inventory updates.
+- `server/mercadopago.js`: Point Orders API, terminal status, cancellation, and webhook validation.
+- `server/auth.js`: optional shared staff PIN and signed HTTP-only sessions.
 
 ### Persistence behavior
 
@@ -206,6 +208,16 @@ Stock adjustments use a database row lock in PostgreSQL so simultaneous updates 
 - `PATCH /api/items/:id`: updates product details.
 - `POST /api/items/:id/adjust`: records stock in, stock out, or an adjustment.
 - `GET /api/movements?limit=100`: returns recent stock movements.
+- `GET /api/sales`: returns recent sales with line items.
+- `POST /api/sales/cash`: completes a cash sale atomically.
+- `POST /api/sales/card`: reserves stock and sends a Point order.
+- `GET /api/sales/:id?refresh=true`: reads and optionally refreshes terminal payment state.
+- `POST /api/sales/:id/retry-card`: safely retries an uncertain Point connection with the same idempotency key.
+- `POST /api/sales/:id/cancel`: cancels a pending Point order when its state allows it.
+- `POST /api/mercadopago/webhook`: validates and processes Point Order webhooks.
+- `GET /api/pos/config`: returns non-secret Point configuration state.
+- `GET /api/pos/terminal`: verifies the configured terminal and `PDV` mode.
+- `GET /api/auth/status`, `POST /api/auth/login`, `POST /api/auth/logout`: shared staff access-code session.
 
 The API rejects invalid product fields and prevents stock from going below zero.
 
@@ -256,7 +268,7 @@ Recommended Railway steps:
    ```
 
 4. Redeploy the app service.
-5. Check deployment logs for `Bakery Stock listening on port ...`.
+5. Check deployment logs for `Bakery POS listening on port ...`.
 6. Generate a public domain under the app service’s Networking settings.
 
 The exact service name must match the database service name. If it is named `Postgres`, use `${{Postgres.DATABASE_URL}}`.
@@ -270,6 +282,12 @@ Railway PostgreSQL supplies `DATABASE_URL`, `PGHOST`, `PGPORT`, `PGUSER`, `PGPAS
 - `DATA_PATH`: JSON path used only when PostgreSQL is not configured.
 - `SEED_DEMO_DATA`: optional local demo-data flag.
 - `PGSSLMODE`: optional PostgreSQL SSL override. The app disables SSL automatically for Railway internal hosts and otherwise uses a permissive TLS configuration suitable for hosted connection URLs.
+- `STAFF_PIN`: shared bakery staff access code.
+- `SESSION_SECRET`: long random session-signing secret.
+- `MERCADOPAGO_ACCESS_TOKEN`: private server-side Mercado Pago credential.
+- `MERCADOPAGO_POINT_TERMINAL_ID`: full Point Smart 2 terminal ID.
+- `MERCADOPAGO_WEBHOOK_SECRET`: secret used to verify notification signatures.
+- `MERCADOPAGO_MOCK`: local-only Point simulator.
 
 Never commit actual values for `DATABASE_URL`, database passwords, or API keys. Use Railway variables.
 
@@ -293,8 +311,8 @@ The following checks were performed during development:
 
 ## Known limitations before real bakery rollout
 
-1. There is no staff authentication yet. Add login/access control before exposing the app publicly.
-2. There are no user roles or permissions yet.
+1. Authentication currently uses one shared staff PIN; there are no individual staff accounts yet.
+2. There are no user roles or per-user permissions yet.
 3. There is no barcode scanner integration.
 4. There are no supplier records, purchase orders, recipes, production batches, or cost reports yet.
 5. There is no export or reporting feature yet.
@@ -348,5 +366,73 @@ The following checks were performed during development:
 - [ ] Generate the Railway public domain.
 - [ ] Add a test product and confirm it survives a restart.
 - [ ] Add real bakery inventory.
-- [ ] Add authentication before public use.
+- [ ] Set `STAFF_PIN` and a long random `SESSION_SECRET` before public use.
 
+## POS and Mercado Pago expansion
+
+The application was expanded from inventory management into a bakery POS after reviewing the current official Mercado Pago Point documentation.
+
+### New product and sales capabilities
+
+- Products now have a whole-CLP sale price and a `sellable` setting.
+- The Ventas section shows only products enabled for sale with a positive price.
+- Cashiers can search/filter products, add them to a cart, change quantities, and see the total.
+- Cash sales are recorded immediately.
+- Card sales are sent from the server to Point Smart 2.
+- Recent sales show paid, pending, failed, cancelled, expired, and refunded states.
+- A pending sale can be reopened to continue monitoring the terminal.
+- Dashboard revenue for the current day is calculated from paid sales.
+
+### Current Point architecture
+
+Mercado Pago's current Point Smart 2 integration uses the unified Orders API:
+
+- Create: `POST https://api.mercadopago.com/v1/orders`.
+- Query: `GET https://api.mercadopago.com/v1/orders/{order_id}`.
+- Cancel a created order: `POST https://api.mercadopago.com/v1/orders/{order_id}/cancel`.
+- Terminal list: `GET https://api.mercadopago.com/terminals/v1/list`.
+- Terminal setup: `PATCH https://api.mercadopago.com/terminals/v1/setup` with operating mode `PDV`.
+- Webhook topic: Order (Mercado Pago).
+- Webhook endpoint in this app: `/api/mercadopago/webhook`.
+
+The older Point payment-intents API was deliberately not used.
+
+### POS database additions
+
+- `items.price` and `items.sellable`.
+- `sales` for payment method, status, total, Mercado Pago IDs/status, timestamps, and inventory-application state.
+- `sale_items` for immutable product name, unit, quantity, unit price, and line total snapshots.
+- `movements.sale_id` links inventory movements to their sale.
+
+Cash sales update the sale, line items, stock, and movements atomically. Card sales reserve stock before sending the order to Point. Failed, cancelled, and expired card orders restore that inventory once; retries and duplicate notifications cannot restore it twice.
+
+### New security configuration
+
+- `STAFF_PIN` enables the shared bakery access-code screen.
+- `SESSION_SECRET` signs the HTTP-only session cookie.
+- Live Point payments are refused unless both values exist.
+- `MERCADOPAGO_ACCESS_TOKEN` is used only by the backend.
+- `MERCADOPAGO_POINT_TERMINAL_ID` identifies the Point Smart 2.
+- `MERCADOPAGO_WEBHOOK_SECRET` validates webhook signatures.
+- `MERCADOPAGO_MOCK=true` provides a local-only terminal simulator.
+
+### POS verification
+
+- Backend syntax checks pass.
+- Automated cash/card inventory tests pass.
+- An HTTP smoke test completed a cash sale and a simulated Point card sale with the expected final stock.
+- The production frontend build passes.
+- The Spanish POS cart and complete card-payment flow were tested in a browser.
+- Desktop, phone, and 1024×768 Elo layouts were checked with no horizontal overflow.
+
+### Updated rollout checklist
+
+- [ ] Add `STAFF_PIN` and a long random `SESSION_SECRET` to Railway.
+- [ ] Create/select the Mercado Pago application for the bakery account.
+- [ ] Associate the Point Smart 2 with the bakery store and point of sale.
+- [ ] Change the terminal to `PDV` mode and restart it.
+- [ ] Add the production Access Token and full terminal ID to Railway.
+- [ ] Configure the Order (Mercado Pago) webhook at `https://YOUR-DOMAIN/api/mercadopago/webhook`.
+- [ ] Add the webhook secret to Railway.
+- [ ] Run Mercado Pago's documented test scenarios before the first live charge.
+- [ ] Perform a small real card payment and refund with the bakery owner present.
