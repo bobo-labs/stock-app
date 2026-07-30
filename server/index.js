@@ -9,9 +9,10 @@ import {
 } from './mercadopago.js'
 import {
   adjustItem, attachPointOrder, closeStore, createItem, createSale, deleteItem, getSale,
-  getSaleByPointOrder, initializeStore, listItems, listMovements, listSales,
-  markCardSaleFailed, updateItem, updateSaleFromPoint,
+  getSaleByPointOrder, getSalesMetrics, initializeStore, listItems, listMovements, listSales,
+  markCardSaleFailed, saveCashClosure, updateItem, updateSaleFromPoint,
 } from './store.js'
+import { createDailyReport } from './report.js'
 
 const app = express()
 const port = Number(process.env.PORT || 3000)
@@ -57,6 +58,43 @@ function cleanCart(body) {
     combined.set(itemId, (combined.get(itemId) || 0) + quantity)
   }
   return [...combined.entries()].map(([itemId, quantity]) => ({ itemId, quantity }))
+}
+
+function parseInstant(value, name) {
+  const parsed = new Date(String(value || ''))
+  if (Number.isNaN(parsed.getTime())) throw badRequest(`${name} must be a valid date.`)
+  return parsed
+}
+
+function cleanMetricsPeriod(source) {
+  const period = {
+    from: parseInstant(source.from, 'from'),
+    to: parseInstant(source.to, 'to'),
+    previousFrom: parseInstant(source.previousFrom, 'previousFrom'),
+    previousTo: parseInstant(source.previousTo, 'previousTo'),
+    todayFrom: parseInstant(source.todayFrom, 'todayFrom'),
+    todayTo: parseInstant(source.todayTo, 'todayTo'),
+    businessDate: String(source.businessDate || ''),
+  }
+  if (period.from >= period.to || period.previousFrom >= period.previousTo || period.todayFrom >= period.todayTo) throw badRequest('The metrics date range is invalid.')
+  if (period.to - period.from > 370 * 86400000) throw badRequest('The metrics date range is too large.')
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(period.businessDate)) throw badRequest('businessDate must use YYYY-MM-DD.')
+  return period
+}
+
+function cleanCashClosure(body) {
+  const period = cleanMetricsPeriod(body)
+  const input = {
+    businessDate: period.businessDate,
+    openingCash: Number(body.openingCash ?? 0),
+    cashAdjustments: Number(body.cashAdjustments ?? 0),
+    countedCash: Number(body.countedCash ?? 0),
+    note: String(body.note || '').trim().slice(0, 500),
+  }
+  if (![input.openingCash, input.cashAdjustments, input.countedCash].every(Number.isInteger)) throw badRequest('Cash amounts must be whole Chilean pesos.')
+  if (input.openingCash < 0 || input.countedCash < 0) throw badRequest('Opening and counted cash cannot be negative.')
+  if (Math.abs(input.cashAdjustments) > 100000000) throw badRequest('The cash adjustment is too large.')
+  return { input, period }
 }
 
 function requireProtectedPoint() {
@@ -128,6 +166,29 @@ app.post('/api/items/:id/adjust', async (req, res, next) => {
 })
 app.get('/api/movements', async (req, res, next) => {
   try { res.json(await listMovements(Math.min(Number(req.query.limit) || 50, 200))) } catch (error) { next(error) }
+})
+
+app.get('/api/metrics', async (req, res, next) => {
+  try { res.json(await getSalesMetrics(cleanMetricsPeriod(req.query))) } catch (error) { next(error) }
+})
+app.post('/api/cash-closures', async (req, res, next) => {
+  try {
+    const { input, period } = cleanCashClosure(req.body)
+    res.json(await saveCashClosure(input, period.todayFrom, period.todayTo))
+  } catch (error) { next(error) }
+})
+app.get('/api/reports/daily', async (req, res, next) => {
+  try {
+    const period = cleanMetricsPeriod(req.query)
+    const language = req.query.language === 'en' ? 'en' : 'es'
+    const [metrics, items] = await Promise.all([getSalesMetrics(period), listItems()])
+    const report = createDailyReport({ metrics, items, businessDate: period.businessDate, language })
+    res.set({
+      'Content-Type': 'text/html; charset=utf-8',
+      'Content-Disposition': `attachment; filename="bakery-report-${period.businessDate}.html"`,
+      'Cache-Control': 'no-store',
+    }).send(report)
+  } catch (error) { next(error) }
 })
 
 app.get('/api/sales', async (req, res, next) => {

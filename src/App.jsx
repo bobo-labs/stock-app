@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   AlertTriangle, ArrowDown, ArrowRight, ArrowUp, BadgeCheck, Banknote, BarChart3,
-  Boxes, CalendarClock, Check, ChevronRight, CirclePlus, Clock3, CreditCard,
-  Croissant, History, LayoutDashboard, LockKeyhole, LogOut, Menu, Minus,
+  Boxes, Calculator, CalendarClock, Check, ChevronRight, CirclePlus, Clock3, CreditCard, Download,
+  Croissant, History, LayoutDashboard, LineChart, LockKeyhole, LogOut, Menu, Minus, Moon,
   PackageOpen, Pencil, Plus, ReceiptText, RotateCw, Search, ShoppingBasket,
-  SlidersHorizontal, Sparkles, Trash2, Wifi, X,
+  SlidersHorizontal, Sparkles, Sun, TrendingDown, TrendingUp, Trash2, WalletCards, Wifi, X,
 } from 'lucide-react'
 import { api } from './api.js'
 import { dateOnly, parseCalendarDate } from './dates.js'
@@ -51,7 +51,15 @@ function LanguageToggle() {
   </div>
 }
 
-function LoginScreen({ onLogin }) {
+function ThemeToggle({ theme, onToggle }) {
+  const { t } = useI18n()
+  const dark = theme === 'dark'
+  return <button className="icon-button theme-toggle" onClick={onToggle} aria-label={dark ? t('lightMode') : t('darkMode')} title={dark ? t('lightMode') : t('darkMode')}>
+    {dark ? <Sun size={18} /> : <Moon size={18} />}
+  </button>
+}
+
+function LoginScreen({ onLogin, theme, onThemeToggle }) {
   const { t } = useI18n()
   const [pin, setPin] = useState('')
   const [busy, setBusy] = useState(false)
@@ -61,7 +69,7 @@ function LoginScreen({ onLogin }) {
     try { await onLogin(pin); setPin('') } catch (nextError) { setError(nextError.message) } finally { setBusy(false) }
   }
   return <main className="login-page">
-    <div className="login-language"><LanguageToggle /></div>
+    <div className="login-language"><ThemeToggle theme={theme} onToggle={onThemeToggle} /><LanguageToggle /></div>
     <section className="login-card">
       <div className="login-mark"><Croissant size={31} /></div>
       <span className="eyebrow">Bakery POS</span>
@@ -400,6 +408,126 @@ function SalesCounter({ items, sales, posConfig, onRefresh, setToast }) {
   </div>
 }
 
+function BarSeries({ data, valueKey = 'revenue', formatValue }) {
+  const { t } = useI18n()
+  const max = Math.max(...data.map((entry) => Number(entry[valueKey]) || 0), 1)
+  const hasData = data.some((entry) => Number(entry[valueKey]) > 0)
+  const entryKey = (entry) => String(entry.key ?? entry.date ?? entry.hour)
+  const suggested = data.reduce((best, entry) => Number(entry[valueKey]) > Number(best?.[valueKey] || 0) ? entry : best, data[0])
+  const signature = data.map((entry) => `${entryKey(entry)}:${entry[valueKey]}:${entry.transactions}`).join('|')
+  const [activeKey, setActiveKey] = useState(() => suggested ? entryKey(suggested) : null)
+  useEffect(() => { if (suggested) setActiveKey(entryKey(suggested)) }, [signature])
+  const active = data.find((entry) => entryKey(entry) === activeKey) || suggested
+  return <div className="chart-shell">
+    <div className="chart-scroll"><div className={`bar-series ${data.length > 12 ? 'dense' : ''}`} style={{ '--columns': data.length }}>
+      {data.map((entry) => {
+        const value = Number(entry[valueKey]) || 0
+        const key = entryKey(entry)
+        const label = entry.detailLabel || entry.label
+        return <button type="button" className={`bar-column ${active && entryKey(active) === key ? 'active' : ''}`} key={key} title={`${label}: ${formatValue(value)}`} aria-label={t('chartBarLabel', { label, value: formatValue(value), count: entry.transactions || 0 })} aria-pressed={active && entryKey(active) === key} onMouseEnter={() => setActiveKey(key)} onFocus={() => setActiveKey(key)} onClick={() => setActiveKey(key)}>
+          <div className="bar-value">{value > 0 ? formatValue(value) : ''}</div>
+          <div className="bar-well"><i style={{ height: value > 0 ? `${Math.max((value / max) * 100, 4)}%` : '2px' }} /></div>
+          <span>{entry.label}</span>
+        </button>
+      })}
+      {!hasData && <div className="chart-empty-line" />}
+    </div></div>
+    {active && <div className="chart-detail" aria-live="polite"><div className="chart-detail-mark"><BarChart3 size={18} /></div><div><span>{t('selectedPeriod')}</span><strong>{active.detailLabel || active.label}</strong></div><div><span>{t('revenue')}</span><strong>{formatValue(active[valueKey])}</strong></div><div><span>{t('transactions')}</span><strong>{active.transactions || 0}</strong></div><small>{t('chartInteractionHint')}</small></div>}
+  </div>
+}
+
+function dailySeries(source, range, language) {
+  const count = range === '30d' ? 30 : range === '7d' ? 7 : 1
+  const indexed = new Map(source.map((entry) => [entry.date, entry]))
+  const formatter = new Intl.DateTimeFormat(language === 'es' ? 'es-CL' : 'en-US', { day: 'numeric', month: 'short' })
+  return Array.from({ length: count }, (_, index) => {
+    const date = new Date(); date.setHours(0, 0, 0, 0); date.setDate(date.getDate() - (count - index - 1))
+    const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+    return { key, date: key, label: formatter.format(date), revenue: indexed.get(key)?.revenue || 0, transactions: indexed.get(key)?.transactions || 0 }
+  })
+}
+
+function CashCloseForm({ metrics, onSubmit, onClose, busy }) {
+  const { t, formatCurrency } = useI18n()
+  const existing = metrics.cashClosure
+  const [form, setForm] = useState({
+    openingCash: existing?.openingCash ?? '', cashAdjustments: existing?.cashAdjustments ?? '',
+    countedCash: existing?.countedCash ?? '', note: existing?.note || '',
+  })
+  const update = (key) => (event) => setForm((current) => ({ ...current, [key]: event.target.value }))
+  const openingCash = Number(form.openingCash || 0)
+  const adjustments = Number(form.cashAdjustments || 0)
+  const countedCash = Number(form.countedCash || 0)
+  const expected = openingCash + metrics.today.cashRevenue + adjustments
+  const difference = countedCash - expected
+  return <form className="form-stack close-form" onSubmit={(event) => { event.preventDefault(); onSubmit(form) }}>
+    <div className="close-live-summary">
+      <div><span>{t('cashToday')}</span><strong>{formatCurrency(metrics.today.cashRevenue)}</strong></div>
+      <div><span>{t('pointToday')}</span><strong>{formatCurrency(metrics.today.cardRevenue)}</strong></div>
+      <div><span>{t('transactions')}</span><strong>{metrics.today.transactions}</strong></div>
+    </div>
+    <div className="form-grid">
+      <div className="field"><label htmlFor="opening-cash">{t('openingCash')}</label><input id="opening-cash" type="number" min="0" step="1" required value={form.openingCash} onChange={update('openingCash')} placeholder="0" /></div>
+      <div className="field"><label htmlFor="cash-adjustments">{t('cashAdjustments')}</label><input id="cash-adjustments" type="number" step="1" value={form.cashAdjustments} onChange={update('cashAdjustments')} placeholder="0" /></div>
+      <p className="field-hint">{t('cashAdjustmentsHint')}</p>
+      <div className="field full"><label htmlFor="counted-cash">{t('countedCashLabel')}</label><input id="counted-cash" type="number" min="0" step="1" required value={form.countedCash} onChange={update('countedCash')} placeholder="0" /></div>
+    </div>
+    <div className="cash-calculation">
+      <div><span>{t('expectedCash')}</span><strong>{formatCurrency(expected)}</strong></div>
+      <div className={difference === 0 ? 'balanced' : difference > 0 ? 'positive' : 'negative'}><span>{t('cashDifference')}</span><strong>{difference > 0 ? '+' : ''}{formatCurrency(difference)}</strong></div>
+    </div>
+    <div className="field full"><label htmlFor="closing-note">{t('closingNote')} <span>{t('optional')}</span></label><textarea id="closing-note" rows="3" value={form.note} onChange={update('note')} placeholder={t('closingNotePlaceholder')} /></div>
+    <div className="modal-actions"><button type="button" className="button secondary" onClick={onClose}>{t('cancel')}</button><button className="button primary" disabled={busy}>{busy ? t('savingClose') : t('saveClose')}<Check size={18} /></button></div>
+  </form>
+}
+
+function MetricsPage({ metrics, range, onRangeChange, onRefresh, onOpenClose, onExport, loading, exporting }) {
+  const { t, language, formatCurrency, formatTime } = useI18n()
+  if (loading && !metrics) return <div className="page analytics-page"><div className="analytics-loading"><div className="loader-mark"><BarChart3 size={27} /></div><span>{t('preparing')}</span></div></div>
+  const data = metrics || {
+    summary: {}, paymentMethods: { cash: {}, card: {} }, daily: [], hourly: [], topProducts: [], today: {}, cashClosure: null,
+  }
+  const summary = data.summary
+  const trendPositive = summary.revenueChangePct !== null && summary.revenueChangePct >= 0
+  const daily = dailySeries(data.daily, range, language)
+  const hourly = data.hourly.map((entry) => ({ ...entry, detailLabel: `${String(entry.hour).padStart(2, '0')}:00`, label: entry.hour % 3 === 0 ? `${String(entry.hour).padStart(2, '0')}:00` : '' }))
+  const paymentShare = (amount) => summary.revenue ? Math.round((amount / summary.revenue) * 100) : 0
+  const close = data.cashClosure
+  const differenceTone = !close || close.difference === 0 ? 'balanced' : close.difference > 0 ? 'positive' : 'negative'
+  return <div className="page enter analytics-page">
+    <section className="page-heading analytics-heading"><div><span className="eyebrow">{t('businessIntelligence')}</span><h1>{t('metricsTitle')}</h1><p>{t('metricsDescription')}</p></div><div className="analytics-actions"><button className="button secondary report-export-button" onClick={onExport} disabled={exporting}><Download size={17} /><span>{exporting ? t('exportingReport') : t('exportDailyReport')}</span></button><div className="range-switch" role="group" aria-label={t('metricsTitle')}>{[['today', 'periodToday'], ['7d', 'period7Days'], ['30d', 'period30Days']].map(([id, key]) => <button key={id} className={range === id ? 'active' : ''} onClick={() => onRangeChange(id)}>{t(key)}</button>)}</div><button className="icon-button" onClick={onRefresh} aria-label={t('refreshMetrics')} title={t('refreshMetrics')}><RotateCw size={18} className={loading ? 'spin' : ''} /></button></div></section>
+
+    <section className="analytics-kpis">
+      <article><div className="metric-icon cocoa"><ReceiptText size={20} /></div><span>{t('collectedSales')}</span><strong>{formatCurrency(summary.revenue)}</strong><small className={trendPositive ? 'positive' : 'negative'}>{summary.revenueChangePct === null ? t('noPreviousComparison') : <>{trendPositive ? <TrendingUp size={13} /> : <TrendingDown size={13} />}{t('comparedWithPrevious', { value: Math.abs(summary.revenueChangePct) })}</>}</small></article>
+      <article><div className="metric-icon sage"><WalletCards size={20} /></div><span>{t('transactions')}</span><strong>{summary.transactions || 0}</strong><small>{t('exactReconciliation')}</small></article>
+      <article><div className="metric-icon amber"><Calculator size={20} /></div><span>{t('averageTicket')}</span><strong>{formatCurrency(summary.averageTicket)}</strong><small>{t('collectedSales')}</small></article>
+      <article><div className="metric-icon rose"><Boxes size={20} /></div><span>{t('unitsSold')}</span><strong>{formatQuantity(summary.itemsSold || 0)}</strong><small>{t('itemsPerTicket')}: {formatQuantity(summary.itemsPerTransaction || 0)}</small></article>
+    </section>
+
+    <section className="analytics-main-grid">
+      <article className="card chart-card"><header className="card-header"><div><span className="eyebrow">{t('salesAnalytics')}</span><h2>{range === 'today' ? t('revenueByHour') : t('revenueByDay')}</h2></div><strong>{formatCurrency(summary.revenue)}</strong></header><BarSeries data={range === 'today' ? hourly : daily} formatValue={formatCurrency} /></article>
+      <article className="card payment-mix-card"><header className="card-header"><div><span className="eyebrow">{t('exactReconciliation')}</span><h2>{t('paymentMix')}</h2></div></header><div className="payment-metrics">
+        {[['cash', t('cashSales'), Banknote, 'sage'], ['card', t('pointSales'), CreditCard, 'cocoa']].map(([method, label, Icon, tone]) => { const item = data.paymentMethods[method] || {}; const share = paymentShare(item.revenue || 0); return <div className="payment-metric" key={method}><div className={`payment-metric-icon ${tone}`}><Icon size={19} /></div><div><span>{label}</span><strong>{formatCurrency(item.revenue)}</strong><small>{item.transactions || 0} {t('transactions').toLowerCase()}</small></div><b>{share}%</b><div className="payment-track"><i style={{ width: `${share}%` }} /></div></div> })}
+      </div></article>
+    </section>
+
+    <section className="analytics-lower-grid">
+      {range !== 'today' && <article className="card chart-card hourly-card"><header className="card-header"><div><span className="eyebrow">{t('hourlyDemand')}</span><h2>{t('revenueByHour')}</h2><p>{t('hourlyDemandDescription')}</p></div></header><BarSeries data={hourly} formatValue={formatCurrency} /></article>}
+      <article className="card top-products-card"><header className="card-header"><div><span className="eyebrow">{t('bestSeller')}</span><h2>{t('topProducts')}</h2><p>{t('topProductsDescription')}</p></div></header>{data.topProducts.length ? <div className="top-products-list">{data.topProducts.map((product, index) => <div key={product.itemId || product.name}><b>{String(index + 1).padStart(2, '0')}</b><div><span><strong>{product.name}</strong><small>{t('soldQuantity', { count: formatQuantity(product.quantity) })}</small></span><span><strong>{formatCurrency(product.revenue)}</strong><small>{product.revenueShare}%</small></span><div><i style={{ width: `${product.revenueShare}%` }} /></div></div></div>)}</div> : <div className="analytics-empty"><BarChart3 size={28} /><p>{t('noSalesForPeriod')}</p></div>}</article>
+    </section>
+
+    <section className="operations-strip" aria-label={t('operationalPulse')}>
+      <div className="operations-title"><span className="eyebrow">{t('operationalPulse')}</span><strong>{summary.pendingPoint || summary.failedPayments ? t('needsReview') : t('allReconciled')}</strong></div>
+      <div><span>{t('pendingPointPayments')}</span><strong>{summary.pendingPoint || 0}</strong></div>
+      <div><span>{t('failedPayments')}</span><strong>{summary.failedPayments || 0}</strong></div>
+      <div><span>{t('refundedAmount')}</span><strong>{formatCurrency(summary.refundedTotal)}</strong></div>
+      <div><span>{t('itemsPerTicket')}</span><strong>{formatQuantity(summary.itemsPerTransaction || 0)}</strong></div>
+    </section>
+
+    <section className="card cash-close-card"><div className="cash-close-copy"><div className="cash-close-icon"><Calculator size={24} /></div><div><span className="eyebrow">{t('closeSummary')}</span><h2>{t('dayClose')}</h2><p>{t('dayCloseDescription')}</p></div></div><div className="cash-close-numbers"><div><span>{t('todayCollected')}</span><strong>{formatCurrency(data.today.revenue)}</strong></div><div><span>{t('cashToday')}</span><strong>{formatCurrency(data.today.cashRevenue)}</strong></div><div><span>{t('pointToday')}</span><strong>{formatCurrency(data.today.cardRevenue)}</strong></div>{close && <><div><span>{t('expectedCash')}</span><strong>{formatCurrency(close.expectedCash)}</strong></div><div className={differenceTone}><span>{close.difference === 0 ? t('closeBalanced') : t('cashDifference')}</span><strong>{close.difference > 0 ? '+' : ''}{formatCurrency(close.difference)}</strong></div></>}</div><div className="cash-close-action">{close && <span><BadgeCheck size={16} />{t('closedAt', { time: formatTime(close.closedAt) })}</span>}<button className="button primary" onClick={onOpenClose}>{close ? t('updateClose') : t('registerClose')}<ArrowRight size={18} /></button></div></section>
+  </div>
+}
+
 function Activity({ movements }) {
   const { t, formatDate } = useI18n()
   const grouped = movements.reduce((acc, movement) => {
@@ -411,11 +539,15 @@ function Activity({ movements }) {
 }
 
 export default function App() {
-  const { t, formatDate } = useI18n()
+  const { t, formatDate, language } = useI18n()
   const [page, setPage] = useState('dashboard')
   const [items, setItems] = useState([])
   const [movements, setMovements] = useState([])
   const [sales, setSales] = useState([])
+  const [metricsData, setMetricsData] = useState(null)
+  const [metricsRange, setMetricsRange] = useState('today')
+  const [metricsLoading, setMetricsLoading] = useState(false)
+  const [exportingReport, setExportingReport] = useState(false)
   const [posConfig, setPosConfig] = useState({ configured: false, mockMode: false, terminalLabel: '' })
   const [auth, setAuth] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -423,17 +555,30 @@ export default function App() {
   const [busy, setBusy] = useState(false)
   const [toast, setToast] = useState(null)
   const [mobileMenu, setMobileMenu] = useState(false)
+  const [theme, setTheme] = useState(() => window.localStorage.getItem('bakery-theme') === 'dark' ? 'dark' : 'light')
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme
+    window.localStorage.setItem('bakery-theme', theme)
+  }, [theme])
 
   const refresh = useCallback(async () => {
     const [nextItems, nextMovements, nextSales, nextPosConfig] = await Promise.all([api.items(), api.movements(), api.sales(), api.posConfig()])
     setItems(nextItems); setMovements(nextMovements); setSales(nextSales); setPosConfig(nextPosConfig)
   }, [])
+  const loadMetrics = useCallback(async (range = metricsRange) => {
+    setMetricsLoading(true)
+    try { setMetricsData(await api.metrics(range)) }
+    catch (error) { setToast({ type: 'error', message: error.message }) }
+    finally { setMetricsLoading(false) }
+  }, [metricsRange])
   useEffect(() => {
     api.authStatus().then(async (status) => {
       setAuth(status)
       if (status.authenticated) await refresh()
     }).catch((error) => setToast({ type: 'error', message: error.message })).finally(() => setLoading(false))
   }, [refresh])
+  useEffect(() => { if (page === 'metrics' && auth?.authenticated) loadMetrics(metricsRange) }, [auth?.authenticated, loadMetrics, metricsRange, page])
   useEffect(() => { if (!toast) return; const id = setTimeout(() => setToast(null), 4200); return () => clearTimeout(id) }, [toast])
 
   const handleLogin = async (pin) => {
@@ -441,7 +586,7 @@ export default function App() {
     setAuth(status); setLoading(true)
     try { await refresh() } finally { setLoading(false) }
   }
-  const handleLogout = async () => { await api.logout(); setAuth({ ...auth, authenticated: false }); setItems([]); setSales([]); setMovements([]) }
+  const handleLogout = async () => { await api.logout(); setAuth({ ...auth, authenticated: false }); setItems([]); setSales([]); setMovements([]); setMetricsData(null) }
   const perform = async (action, message) => {
     setBusy(true)
     try { await action(); await refresh(); setModal(null); setToast({ type: 'success', message }) }
@@ -454,31 +599,53 @@ export default function App() {
   const editItem = (item, form) => perform(() => api.updateItem(item.id, form), t('productUpdated', { name: form.name }))
   const deleteItem = (item) => perform(() => api.deleteItem(item.id), t('productDeleted', { name: item.name }))
   const adjustItem = (item, form) => perform(() => api.adjustItem(item.id, form), t('stockUpdated', { name: item.name }))
+  const saveCashClose = async (form) => {
+    setBusy(true)
+    try {
+      await api.saveCashClosure({
+        openingCash: Number(form.openingCash || 0), cashAdjustments: Number(form.cashAdjustments || 0),
+        countedCash: Number(form.countedCash || 0), note: form.note,
+      })
+      setModal(null); await loadMetrics(metricsRange); setToast({ type: 'success', message: t('cashCloseSaved') })
+    } catch (error) { setToast({ type: 'error', message: error.message }) }
+    finally { setBusy(false) }
+  }
+  const exportDailyReport = async () => {
+    setExportingReport(true)
+    try {
+      const link = document.createElement('a')
+      link.href = api.dailyReportUrl(language); link.download = ''; document.body.appendChild(link); link.click(); link.remove()
+      setToast({ type: 'success', message: t('reportExported') })
+    } catch (error) { setToast({ type: 'error', message: error.message }) }
+    finally { setExportingReport(false) }
+  }
   const nav = [
     { id: 'dashboard', label: t('overview'), icon: LayoutDashboard },
     { id: 'pos', label: t('sales'), icon: ShoppingBasket },
     { id: 'inventory', label: t('inventory'), icon: Boxes },
+    { id: 'metrics', label: t('metricsNav'), icon: LineChart },
     { id: 'activity', label: t('activity'), icon: History },
   ]
   const pageTitle = nav.find((entry) => entry.id === page)?.label
 
   if (loading && !auth) return <div className="loading full"><div className="loader-mark"><Croissant size={28} /></div><span>{t('preparing')}</span></div>
-  if (auth?.required && !auth.authenticated) return <LoginScreen onLogin={handleLogin} />
+  if (auth?.required && !auth.authenticated) return <LoginScreen onLogin={handleLogin} theme={theme} onThemeToggle={() => setTheme((current) => current === 'dark' ? 'light' : 'dark')} />
 
   return <div className="app-shell">
     <aside className={`sidebar ${mobileMenu ? 'open' : ''}`}>
       <div className="brand"><div className="brand-mark"><Croissant size={24} /></div><div><strong>Bakery POS</strong><span>{t('brandSubtitle')}</span></div></div>
       <nav>{nav.map(({ id, label, icon: Icon }) => <button key={id} className={page === id ? 'active' : ''} onClick={() => { setPage(id); setMobileMenu(false) }}><Icon size={20} /><span>{label}</span>{page === id && <i />}</button>)}</nav>
       <div className="sidebar-note"><div><Sparkles size={18} /></div><strong>{t('freshnessFirst')}</strong><p>{t('freshnessDescription')}</p></div>
-      <div className="sidebar-footer"><span className="online-dot" />{t('allChangesSaved')}{auth?.required && <button onClick={handleLogout} aria-label={t('signOut')}><LogOut size={15} /></button>}</div>
+      <div className="sidebar-footer"><span className="online-dot" />{t('allChangesSaved')}<ThemeToggle theme={theme} onToggle={() => setTheme((current) => current === 'dark' ? 'light' : 'dark')} />{auth?.required && <button onClick={handleLogout} aria-label={t('signOut')}><LogOut size={15} /></button>}</div>
     </aside>
     {mobileMenu && <button className="menu-backdrop" onClick={() => setMobileMenu(false)} aria-label={t('close')} />}
     <main className="main-content">
-      <header className="topbar"><button className="icon-button menu-button" onClick={() => setMobileMenu(true)} aria-label={t('openMenu')}><Menu size={21} /></button><div><span>Bakery POS</span><strong>{pageTitle}</strong></div><LanguageToggle />{page !== 'pos' && <button className="button primary mobile-add" onClick={() => setModal({ type: 'add' })}><Plus size={20} /><span>{t('add')}</span></button>}<div className="date-chip"><Clock3 size={17} /><span>{formatDate(new Date().toISOString().slice(0, 10))}</span></div></header>
+      <header className="topbar"><button className="icon-button menu-button" onClick={() => setMobileMenu(true)} aria-label={t('openMenu')}><Menu size={21} /></button><div><span>Bakery POS</span><strong>{pageTitle}</strong></div><ThemeToggle theme={theme} onToggle={() => setTheme((current) => current === 'dark' ? 'light' : 'dark')} /><LanguageToggle />{['dashboard', 'inventory'].includes(page) && <button className="button primary mobile-add" onClick={() => setModal({ type: 'add' })}><Plus size={20} /><span>{t('add')}</span></button>}<div className="date-chip"><Clock3 size={17} /><span>{formatDate(new Date().toISOString().slice(0, 10))}</span></div></header>
       {loading ? <div className="loading"><div className="loader-mark"><Croissant size={28} /></div><span>{t('preparing')}</span></div> : <>
         {page === 'dashboard' && <Dashboard items={items} movements={movements} sales={sales} onAdd={() => setModal({ type: 'add' })} onAdjust={(item) => setModal({ type: 'adjust', item })} onGoInventory={() => setPage('inventory')} onGoPos={() => setPage('pos')} />}
         {page === 'pos' && <SalesCounter items={items} sales={sales} posConfig={posConfig} onRefresh={refresh} setToast={setToast} />}
         {page === 'inventory' && <Inventory items={items} onAdd={() => setModal({ type: 'add' })} onAdjust={(item) => setModal({ type: 'adjust', item })} onEdit={(item) => setModal({ type: 'edit', item })} />}
+        {page === 'metrics' && <MetricsPage metrics={metricsData} range={metricsRange} onRangeChange={setMetricsRange} onRefresh={() => loadMetrics(metricsRange)} onOpenClose={() => setModal({ type: 'cash-close' })} onExport={exportDailyReport} loading={metricsLoading} exporting={exportingReport} />}
         {page === 'activity' && <Activity movements={movements} />}
       </>}
     </main>
@@ -486,6 +653,7 @@ export default function App() {
     {modal?.type === 'add' && <Modal title={t('addProduct')} eyebrow={t('inventorySetup')} onClose={() => setModal(null)}><ProductForm onSubmit={addItem} onClose={() => setModal(null)} busy={busy} /></Modal>}
     {modal?.type === 'edit' && <Modal title={modal.item.name} eyebrow={t('productDetails')} onClose={() => setModal(null)}><ProductForm item={modal.item} onSubmit={(form) => editItem(modal.item, form)} onDelete={() => deleteItem(modal.item)} onClose={() => setModal(null)} busy={busy} /></Modal>}
     {modal?.type === 'adjust' && <Modal title={modal.item.name} eyebrow={t('updateStock')} onClose={() => setModal(null)}><AdjustForm item={modal.item} onSubmit={(form) => adjustItem(modal.item, form)} onClose={() => setModal(null)} busy={busy} /></Modal>}
+    {modal?.type === 'cash-close' && metricsData && <Modal title={t('dayClose')} eyebrow={t('closeSummary')} onClose={() => setModal(null)}><CashCloseForm metrics={metricsData} onSubmit={saveCashClose} onClose={() => setModal(null)} busy={busy} /></Modal>}
     {toast && <div className={`toast ${toast.type}`} role="status"><div>{toast.type === 'success' ? <Check size={18} /> : <AlertTriangle size={18} />}</div><span>{toast.message}</span><button onClick={() => setToast(null)} aria-label={t('close')}><X size={16} /></button></div>}
   </div>
 }

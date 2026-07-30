@@ -13,6 +13,9 @@ A responsive, touch-friendly bakery inventory and point-of-sale application. Spa
 - Keep sales, line-item price snapshots, payment state, and inventory changes in PostgreSQL.
 - Restore reserved inventory exactly once when a card order fails, expires, or is cancelled.
 - View recent sales and resume a pending terminal payment.
+- Review revenue, payment mix, hourly demand, best sellers, and daily cash reconciliation.
+- Export a lightweight, self-contained daily HTML report.
+- Switch between a soft pastel light theme and a gray dark theme.
 - Optional staff PIN protection with an HTTP-only session cookie.
 - Responsive layouts for phones, desktops, and the 1024×768 Elo touchscreen.
 
@@ -47,6 +50,14 @@ The mock terminal approves a card sale after a short delay. Never set `MERCADOPA
 6. Open `/api/health`; a healthy deployment returns `{ "ok": true }`.
 
 Database tables and non-destructive schema additions are created automatically on startup.
+
+To replace a connected PostgreSQL database with the generated one-week presentation dataset, run this only from an environment that supplies the intended `DATABASE_URL`:
+
+```bash
+npm run seed:week:postgres -- --yes --replace-production-demo
+```
+
+The command first copies all current application tables into timestamped tables under the `bakery_demo_backups` schema. It then loads products, sales, line items, inventory movements, and seven daily cash closures in one transaction. If generation, insertion, or verification fails, PostgreSQL rolls the replacement back.
 
 ## Point Smart 2 setup
 
@@ -115,8 +126,11 @@ A refund does not prove that physical products were returned, so stock must be a
 npm run check
 npm test
 npm run build
+npm run seed:week -- --yes
 npm start
 ```
+
+`seed:week` only replaces the local JSON demo. The PostgreSQL command is deliberately separate and requires the two explicit confirmation flags shown in the Railway section.
 
 ## Production note
 

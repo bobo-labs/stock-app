@@ -12,6 +12,34 @@ async function request(url, options) {
   return data
 }
 
+function localDateKey(date) {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+export function metricsPeriod(range = 'today') {
+  const now = new Date()
+  const todayFrom = new Date(now)
+  todayFrom.setHours(0, 0, 0, 0)
+  const from = new Date(todayFrom)
+  if (range === '7d') from.setDate(from.getDate() - 6)
+  if (range === '30d') from.setDate(from.getDate() - 29)
+  const duration = now.getTime() - from.getTime()
+  const previousTo = new Date(from)
+  const previousFrom = new Date(previousTo.getTime() - duration)
+  return {
+    from: from.toISOString(),
+    to: new Date(now.getTime() + 1000).toISOString(),
+    previousFrom: previousFrom.toISOString(),
+    previousTo: previousTo.toISOString(),
+    todayFrom: todayFrom.toISOString(),
+    todayTo: new Date(now.getTime() + 1000).toISOString(),
+    businessDate: localDateKey(now),
+  }
+}
+
 export const api = {
   authStatus: () => request('/api/auth/status'),
   login: (pin) => request('/api/auth/login', { method: 'POST', body: JSON.stringify({ pin }) }),
@@ -19,6 +47,9 @@ export const api = {
   items: () => request('/api/items'),
   movements: () => request('/api/movements?limit=100'),
   sales: () => request('/api/sales?limit=50'),
+  metrics: (range = 'today') => request(`/api/metrics?${new URLSearchParams(metricsPeriod(range))}`),
+  saveCashClosure: (closure) => request('/api/cash-closures', { method: 'POST', body: JSON.stringify({ ...metricsPeriod('today'), ...closure }) }),
+  dailyReportUrl: (language = 'es') => `/api/reports/daily?${new URLSearchParams({ ...metricsPeriod('today'), language })}`,
   posConfig: () => request('/api/pos/config'),
   terminal: () => request('/api/pos/terminal'),
   createItem: (item) => request('/api/items', { method: 'POST', body: JSON.stringify(item) }),

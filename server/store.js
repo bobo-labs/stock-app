@@ -85,10 +85,30 @@ function normalizeSale(row, items = row.items || []) {
   }
 }
 
+function normalizeCashClosure(row) {
+  if (!row) return null
+  return {
+    id: row.id,
+    businessDate: dateOnly(row.business_date ?? row.businessDate),
+    openingCash: Number(row.opening_cash ?? row.openingCash ?? 0),
+    cashAdjustments: Number(row.cash_adjustments ?? row.cashAdjustments ?? 0),
+    countedCash: Number(row.counted_cash ?? row.countedCash ?? 0),
+    cashSales: Number(row.cash_sales ?? row.cashSales ?? 0),
+    cardSales: Number(row.card_sales ?? row.cardSales ?? 0),
+    totalSales: Number(row.total_sales ?? row.totalSales ?? 0),
+    expectedCash: Number(row.expected_cash ?? row.expectedCash ?? 0),
+    difference: Number(row.difference ?? 0),
+    transactionCount: Number(row.transaction_count ?? row.transactionCount ?? 0),
+    note: row.note || '',
+    closedAt: row.closed_at ?? row.closedAt,
+  }
+}
+
 function ensureFileShape(data) {
   data.items ||= []
   data.movements ||= []
   data.sales ||= []
+  data.cashClosures ||= []
   for (const item of data.items) {
     item.price = Number(item.price || 0)
     item.sellable = Boolean(item.sellable)
@@ -153,6 +173,21 @@ export async function initializeStore() {
         sale_id UUID REFERENCES sales(id) ON DELETE SET NULL,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
+      CREATE TABLE IF NOT EXISTS cash_closures (
+        id UUID PRIMARY KEY,
+        business_date DATE NOT NULL UNIQUE,
+        opening_cash NUMERIC(12,0) NOT NULL DEFAULT 0 CHECK (opening_cash >= 0),
+        cash_adjustments NUMERIC(12,0) NOT NULL DEFAULT 0,
+        counted_cash NUMERIC(12,0) NOT NULL DEFAULT 0 CHECK (counted_cash >= 0),
+        cash_sales NUMERIC(12,0) NOT NULL DEFAULT 0 CHECK (cash_sales >= 0),
+        card_sales NUMERIC(12,0) NOT NULL DEFAULT 0 CHECK (card_sales >= 0),
+        total_sales NUMERIC(12,0) NOT NULL DEFAULT 0 CHECK (total_sales >= 0),
+        expected_cash NUMERIC(12,0) NOT NULL DEFAULT 0,
+        difference NUMERIC(12,0) NOT NULL DEFAULT 0,
+        transaction_count INTEGER NOT NULL DEFAULT 0 CHECK (transaction_count >= 0),
+        note TEXT NOT NULL DEFAULT '',
+        closed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
       ALTER TABLE movements ADD COLUMN IF NOT EXISTS sale_id UUID REFERENCES sales(id) ON DELETE SET NULL;
       ALTER TABLE sale_items ALTER COLUMN item_id DROP NOT NULL;
       ALTER TABLE movements ALTER COLUMN item_id DROP NOT NULL;
@@ -177,6 +212,7 @@ export async function initializeStore() {
       CREATE INDEX IF NOT EXISTS sales_created_at_idx ON sales(created_at DESC);
       CREATE INDEX IF NOT EXISTS sales_mp_order_id_idx ON sales(mp_order_id);
       CREATE INDEX IF NOT EXISTS sale_items_sale_id_idx ON sale_items(sale_id);
+      CREATE INDEX IF NOT EXISTS cash_closures_business_date_idx ON cash_closures(business_date DESC);
     `)
     return
   }
@@ -187,7 +223,7 @@ export async function initializeStore() {
     const data = ensureFileShape(await readFileData())
     await fs.writeFile(dataPath, JSON.stringify(data, null, 2))
   } catch {
-    const data = { items: [], movements: [], sales: [] }
+    const data = { items: [], movements: [], sales: [], cashClosures: [] }
     if (process.env.SEED_DEMO_DATA === 'true') {
       for (const item of demoItems) addItemToData(data, item)
     }
@@ -635,6 +671,187 @@ export async function listSales(limit = 50) {
     GROUP BY s.id ORDER BY s.created_at DESC LIMIT $1
   `, [limit])
   return rows.map((row) => normalizeSale(row, row.items))
+}
+
+function saleTimestamp(sale) {
+  return new Date(sale.paidAt || sale.createdAt).getTime()
+}
+
+function isWithin(sale, from, to) {
+  const timestamp = saleTimestamp(sale)
+  return timestamp >= from.getTime() && timestamp < to.getTime()
+}
+
+const bakeryTimeZone = process.env.BAKERY_TIME_ZONE || 'America/Santiago'
+const datePartsFormatter = new Intl.DateTimeFormat('en-US', {
+  timeZone: bakeryTimeZone, year: 'numeric', month: '2-digit', day: '2-digit',
+})
+const hourFormatter = new Intl.DateTimeFormat('en-US', {
+  timeZone: bakeryTimeZone, hour: '2-digit', hourCycle: 'h23',
+})
+
+function localDateKey(value) {
+  const parts = Object.fromEntries(datePartsFormatter.formatToParts(new Date(value)).map((part) => [part.type, part.value]))
+  return `${parts.year}-${parts.month}-${parts.day}`
+}
+
+function paidSummary(sales) {
+  const revenue = sales.reduce((sum, sale) => sum + sale.total, 0)
+  const itemsSold = sales.reduce((sum, sale) => sum + sale.items.reduce((lineSum, line) => lineSum + line.quantity, 0), 0)
+  return {
+    revenue,
+    transactions: sales.length,
+    averageTicket: sales.length ? Math.round(revenue / sales.length) : 0,
+    itemsSold,
+    itemsPerTransaction: sales.length ? Number((itemsSold / sales.length).toFixed(2)) : 0,
+  }
+}
+
+export function buildSalesMetrics(sales, { from, to, previousFrom, previousTo, todayFrom, todayTo }) {
+  const currentSales = sales.filter((sale) => isWithin(sale, from, to))
+  const currentPaid = currentSales.filter((sale) => sale.status === 'paid')
+  const previousPaid = sales.filter((sale) => sale.status === 'paid' && isWithin(sale, previousFrom, previousTo))
+  const todayPaid = sales.filter((sale) => sale.status === 'paid' && isWithin(sale, todayFrom, todayTo))
+  const summary = paidSummary(currentPaid)
+  const previous = paidSummary(previousPaid)
+  const cashPaid = currentPaid.filter((sale) => sale.paymentMethod === 'cash')
+  const cardPaid = currentPaid.filter((sale) => sale.paymentMethod === 'card')
+  const todayCash = todayPaid.filter((sale) => sale.paymentMethod === 'cash')
+  const todayCard = todayPaid.filter((sale) => sale.paymentMethod === 'card')
+  const dailyMap = new Map()
+  const hourly = Array.from({ length: 24 }, (_, hour) => ({ hour, revenue: 0, transactions: 0 }))
+  const products = new Map()
+
+  for (const sale of currentPaid) {
+    const day = localDateKey(sale.paidAt || sale.createdAt)
+    const daily = dailyMap.get(day) || { date: day, revenue: 0, transactions: 0 }
+    daily.revenue += sale.total
+    daily.transactions += 1
+    dailyMap.set(day, daily)
+
+    const hour = Number(hourFormatter.format(new Date(sale.paidAt || sale.createdAt)))
+    if (hourly[hour]) {
+      hourly[hour].revenue += sale.total
+      hourly[hour].transactions += 1
+    }
+
+    for (const line of sale.items) {
+      const key = line.itemId || line.name
+      const product = products.get(key) || { itemId: line.itemId || null, name: line.name, quantity: 0, revenue: 0 }
+      product.quantity += line.quantity
+      product.revenue += line.lineTotal
+      products.set(key, product)
+    }
+  }
+
+  const topProducts = [...products.values()]
+    .sort((a, b) => b.revenue - a.revenue || b.quantity - a.quantity)
+    .slice(0, 8)
+    .map((product) => ({ ...product, revenueShare: summary.revenue ? Number(((product.revenue / summary.revenue) * 100).toFixed(1)) : 0 }))
+
+  return {
+    summary: {
+      ...summary,
+      previousRevenue: previous.revenue,
+      revenueChangePct: previous.revenue > 0 ? Number((((summary.revenue - previous.revenue) / previous.revenue) * 100).toFixed(1)) : null,
+      pendingPoint: currentSales.filter((sale) => sale.paymentMethod === 'card' && sale.status === 'pending').length,
+      failedPayments: currentSales.filter((sale) => ['failed', 'cancelled', 'expired'].includes(sale.status)).length,
+      refundedTotal: currentSales.filter((sale) => sale.status === 'refunded').reduce((sum, sale) => sum + sale.total, 0),
+    },
+    paymentMethods: {
+      cash: paidSummary(cashPaid),
+      card: paidSummary(cardPaid),
+    },
+    daily: [...dailyMap.values()].sort((a, b) => a.date.localeCompare(b.date)),
+    hourly,
+    topProducts,
+    today: {
+      ...paidSummary(todayPaid),
+      cashRevenue: paidSummary(todayCash).revenue,
+      cashTransactions: todayCash.length,
+      cardRevenue: paidSummary(todayCard).revenue,
+      cardTransactions: todayCard.length,
+    },
+  }
+}
+
+async function listSalesBetween(from, to) {
+  if (!pool) {
+    const data = await readFileData()
+    return data.sales.map((sale) => normalizeSale(sale)).filter((sale) => isWithin(sale, from, to))
+  }
+  const { rows } = await pool.query(`
+    SELECT s.*, COALESCE(json_agg(si ORDER BY si.item_name) FILTER (WHERE si.id IS NOT NULL), '[]') AS items
+    FROM sales s LEFT JOIN sale_items si ON si.sale_id=s.id
+    WHERE COALESCE(s.paid_at, s.created_at) >= $1 AND COALESCE(s.paid_at, s.created_at) < $2
+    GROUP BY s.id ORDER BY s.created_at DESC
+  `, [from.toISOString(), to.toISOString()])
+  return rows.map((row) => normalizeSale(row, row.items))
+}
+
+export async function getCashClosure(businessDate) {
+  if (!pool) {
+    const data = await readFileData()
+    return normalizeCashClosure(data.cashClosures.find((closure) => closure.businessDate === businessDate))
+  }
+  const { rows } = await pool.query('SELECT * FROM cash_closures WHERE business_date=$1 LIMIT 1', [businessDate])
+  return normalizeCashClosure(rows[0])
+}
+
+export async function getSalesMetrics(period) {
+  const earliest = new Date(Math.min(period.from.getTime(), period.previousFrom.getTime(), period.todayFrom.getTime()))
+  const latest = new Date(Math.max(period.to.getTime(), period.previousTo.getTime(), period.todayTo.getTime()))
+  const sales = await listSalesBetween(earliest, latest)
+  const metrics = buildSalesMetrics(sales, period)
+  return { ...metrics, cashClosure: await getCashClosure(period.businessDate) }
+}
+
+function closureSnapshot(sales, input) {
+  const paid = sales.filter((sale) => sale.status === 'paid')
+  const cashSales = paid.filter((sale) => sale.paymentMethod === 'cash').reduce((sum, sale) => sum + sale.total, 0)
+  const cardSales = paid.filter((sale) => sale.paymentMethod === 'card').reduce((sum, sale) => sum + sale.total, 0)
+  const totalSales = cashSales + cardSales
+  const expectedCash = input.openingCash + cashSales + input.cashAdjustments
+  return {
+    id: input.id || crypto.randomUUID(), businessDate: input.businessDate,
+    openingCash: input.openingCash, cashAdjustments: input.cashAdjustments, countedCash: input.countedCash,
+    cashSales, cardSales, totalSales, expectedCash, difference: input.countedCash - expectedCash,
+    transactionCount: paid.length, note: input.note, closedAt: new Date().toISOString(),
+  }
+}
+
+export async function saveCashClosure(input, todayFrom, todayTo) {
+  if (!pool) {
+    return mutateFileData((data) => {
+      const todaySales = data.sales.map((sale) => normalizeSale(sale)).filter((sale) => isWithin(sale, todayFrom, todayTo))
+      const existingIndex = data.cashClosures.findIndex((closure) => closure.businessDate === input.businessDate)
+      const closure = closureSnapshot(todaySales, { ...input, id: existingIndex >= 0 ? data.cashClosures[existingIndex].id : null })
+      if (existingIndex >= 0) data.cashClosures[existingIndex] = closure
+      else data.cashClosures.unshift(closure)
+      return normalizeCashClosure(closure)
+    })
+  }
+
+  const todaySales = await listSalesBetween(todayFrom, todayTo)
+  const closure = closureSnapshot(todaySales, input)
+  const { rows } = await pool.query(`
+    INSERT INTO cash_closures (
+      id, business_date, opening_cash, cash_adjustments, counted_cash, cash_sales, card_sales,
+      total_sales, expected_cash, difference, transaction_count, note, closed_at
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+    ON CONFLICT (business_date) DO UPDATE SET
+      opening_cash=EXCLUDED.opening_cash, cash_adjustments=EXCLUDED.cash_adjustments,
+      counted_cash=EXCLUDED.counted_cash, cash_sales=EXCLUDED.cash_sales,
+      card_sales=EXCLUDED.card_sales, total_sales=EXCLUDED.total_sales,
+      expected_cash=EXCLUDED.expected_cash, difference=EXCLUDED.difference,
+      transaction_count=EXCLUDED.transaction_count, note=EXCLUDED.note, closed_at=EXCLUDED.closed_at
+    RETURNING *
+  `, [
+    closure.id, closure.businessDate, closure.openingCash, closure.cashAdjustments, closure.countedCash,
+    closure.cashSales, closure.cardSales, closure.totalSales, closure.expectedCash, closure.difference,
+    closure.transactionCount, closure.note, closure.closedAt,
+  ])
+  return normalizeCashClosure(rows[0])
 }
 
 export async function listMovements(limit = 50) {
