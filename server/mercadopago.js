@@ -15,7 +15,7 @@ function configurationError() {
   return Object.assign(new Error('Mercado Pago is not configured. Add the access token and Point terminal ID in Railway.'), { status: 503 })
 }
 
-async function mercadoPagoRequest(endpoint, { method = 'GET', body, idempotencyKey } = {}) {
+async function mercadoPagoRequest(endpoint, { method = 'GET', body, idempotencyKey, uncertainMessage } = {}) {
   const { accessToken } = credentials()
   if (!accessToken) throw configurationError()
 
@@ -32,7 +32,7 @@ async function mercadoPagoRequest(endpoint, { method = 'GET', body, idempotencyK
       signal: AbortSignal.timeout(12000),
     })
   } catch (error) {
-    throw Object.assign(new Error('Mercado Pago could not be reached. The sale is still reserved; retry the connection before cancelling it.'), {
+    throw Object.assign(new Error(uncertainMessage || 'Mercado Pago could not be reached. The sale is still reserved; retry the connection before cancelling it.'), {
       status: 502,
       uncertain: true,
       cause: error,
@@ -67,6 +67,27 @@ function mockOrder(sale, status = 'created') {
         status,
         status_detail: processed ? 'accredited' : status,
         payment_method: processed ? { id: 'visa', type: 'credit_card', installments: 1 } : undefined,
+      }],
+    },
+  }
+}
+
+function mockRefundOrder(sale, refund) {
+  const fullyRefunded = refund.full === true
+  return {
+    ...mockOrder(sale, 'processed'),
+    status: fullyRefunded ? 'refunded' : 'processed',
+    status_detail: fullyRefunded ? 'refunded' : 'partially_refunded',
+    transactions: {
+      payments: [{
+        ...mockOrder(sale, 'processed').transactions.payments[0],
+        status: fullyRefunded ? 'refunded' : 'processed',
+        status_detail: fullyRefunded ? 'refunded' : 'partially_refunded',
+      }],
+      refunds: [{
+        id: `MOCK-REFUND-${refund.id}`,
+        amount: String(Math.round(refund.amount)),
+        status: 'processed',
       }],
     },
   }
@@ -120,6 +141,25 @@ export async function cancelPointOrder(orderId, sale) {
   return mercadoPagoRequest(`/v1/orders/${encodeURIComponent(orderId)}/cancel`, {
     method: 'POST',
     idempotencyKey: crypto.randomUUID(),
+  })
+}
+
+export async function refundPointOrder(orderId, sale, refund) {
+  if (mockMode) return mockRefundOrder(sale, refund)
+  if (!sale.mpPaymentId) {
+    throw Object.assign(new Error('Mercado Pago did not return a payment ID for this sale.'), { status: 409 })
+  }
+
+  return mercadoPagoRequest(`/v1/orders/${encodeURIComponent(orderId)}/refund`, {
+    method: 'POST',
+    idempotencyKey: refund.id,
+    uncertainMessage: 'Mercado Pago did not confirm the refund. Retry it with the same request before taking another action.',
+    body: refund.full ? undefined : {
+      transactions: [{
+        id: sale.mpPaymentId,
+        amount: String(Math.round(refund.amount)),
+      }],
+    },
   })
 }
 

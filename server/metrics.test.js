@@ -17,7 +17,7 @@ test('sales metrics and the daily cash close reconcile payment methods', async (
       lowStockThreshold: 2, sku: 'METRIC-1', expiryDate: null, price: 1500, sellable: true,
     })
 
-    await store.createSale([{ itemId: product.id, quantity: 2 }], 'cash')
+    const cashSale = await store.createSale([{ itemId: product.id, quantity: 2 }], 'cash')
     const cardSale = await store.createSale([{ itemId: product.id, quantity: 3 }], 'card')
     const pointOrder = {
       id: `POINT-${cardSale.id}`, status: 'processed', status_detail: 'accredited',
@@ -26,6 +26,11 @@ test('sales metrics and the daily cash close reconcile payment methods', async (
     }
     await store.attachPointOrder(cardSale.id, pointOrder)
     await store.updateSaleFromPoint(pointOrder)
+    const cashRefund = await store.prepareRefund(cashSale.id, {
+      items: [{ lineId: cashSale.items[0].lineId, quantity: 1 }], reason: 'Returned item', restock: true,
+      creditNoteRequired: false, originalDocumentType: '', originalFolio: '',
+    })
+    await store.completeRefund(cashRefund.refund.id)
 
     const now = new Date()
     const from = new Date(now.getTime() - 86400000)
@@ -36,21 +41,22 @@ test('sales metrics and the daily cash close reconcile payment methods', async (
     const period = { from, to, previousFrom, previousTo, todayFrom: from, todayTo: to, businessDate }
 
     const metrics = await store.getSalesMetrics(period)
-    assert.equal(metrics.summary.revenue, 7500)
+    assert.equal(metrics.summary.revenue, 6000)
+    assert.equal(metrics.summary.refundedTotal, 1500)
     assert.equal(metrics.summary.transactions, 2)
-    assert.equal(metrics.summary.itemsSold, 5)
-    assert.equal(metrics.summary.averageTicket, 3750)
-    assert.equal(metrics.paymentMethods.cash.revenue, 3000)
+    assert.equal(metrics.summary.itemsSold, 4)
+    assert.equal(metrics.summary.averageTicket, 3000)
+    assert.equal(metrics.paymentMethods.cash.revenue, 1500)
     assert.equal(metrics.paymentMethods.card.revenue, 4500)
-    assert.equal(metrics.topProducts[0].quantity, 5)
-    assert.equal(metrics.topProducts[0].revenue, 7500)
+    assert.equal(metrics.topProducts[0].quantity, 4)
+    assert.equal(metrics.topProducts[0].revenue, 6000)
 
     const closure = await store.saveCashClosure({
-      businessDate, openingCash: 10000, cashAdjustments: -1000, countedCash: 12000, note: 'Test close',
+      businessDate, openingCash: 10000, cashAdjustments: -1000, countedCash: 10500, note: 'Test close',
     }, from, to)
-    assert.equal(closure.cashSales, 3000)
+    assert.equal(closure.cashSales, 1500)
     assert.equal(closure.cardSales, 4500)
-    assert.equal(closure.expectedCash, 12000)
+    assert.equal(closure.expectedCash, 10500)
     assert.equal(closure.difference, 0)
     assert.equal(closure.transactionCount, 2)
 

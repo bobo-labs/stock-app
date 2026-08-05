@@ -59,7 +59,58 @@ function normalizeMovement(row) {
   }
 }
 
-function normalizeSale(row, items = row.items || []) {
+function normalizeCreditNote(row) {
+  if (!row) return null
+  return {
+    id: row.id,
+    status: row.status,
+    mode: row.mode || 'manual',
+    originalDocumentType: row.original_document_type ?? row.originalDocumentType ?? '',
+    originalFolio: row.original_folio ?? row.originalFolio ?? '',
+    folio: row.folio || '',
+    siiTrackId: row.sii_track_id ?? row.siiTrackId ?? '',
+    errorDetail: row.error_detail ?? row.errorDetail ?? '',
+    createdAt: row.created_at ?? row.createdAt,
+    updatedAt: row.updated_at ?? row.updatedAt,
+    issuedAt: row.issued_at ?? row.issuedAt ?? null,
+  }
+}
+
+function normalizeRefund(row, items = row.items || [], creditNote = row.creditNote || row.credit_note || null) {
+  return {
+    id: row.id,
+    saleId: row.sale_id ?? row.saleId,
+    status: row.status,
+    amount: Number(row.amount),
+    reason: row.reason || '',
+    restock: Boolean(row.restock),
+    creditNoteRequired: Boolean(row.credit_note_required ?? row.creditNoteRequired),
+    originalDocumentType: row.original_document_type ?? row.originalDocumentType ?? '',
+    originalFolio: row.original_folio ?? row.originalFolio ?? '',
+    mpRefundId: row.mp_refund_id ?? row.mpRefundId ?? null,
+    mpStatus: row.mp_status ?? row.mpStatus ?? null,
+    errorDetail: row.error_detail ?? row.errorDetail ?? '',
+    items: items.map((item) => ({
+      lineId: item.sale_item_id ?? item.lineId,
+      itemId: item.item_id ?? item.itemId ?? null,
+      name: item.item_name ?? item.name,
+      quantity: Number(item.quantity),
+      unitPrice: Number(item.unit_price ?? item.unitPrice),
+      lineTotal: Number(item.line_total ?? item.lineTotal),
+      restocked: Boolean(item.restocked),
+    })),
+    creditNote: normalizeCreditNote(creditNote),
+    createdAt: row.created_at ?? row.createdAt,
+    updatedAt: row.updated_at ?? row.updatedAt,
+    processedAt: row.processed_at ?? row.processedAt ?? null,
+  }
+}
+
+function normalizeSale(row, items = row.items || [], refunds = row.refunds || []) {
+  const normalizedRefunds = refunds.map((refund) => normalizeRefund(refund, refund.items, refund.creditNote || refund.credit_note))
+  const refundedTotal = normalizedRefunds
+    .filter((refund) => refund.status === 'processed')
+    .reduce((sum, refund) => sum + refund.amount, 0)
   return {
     id: row.id,
     shortId: shortId(row.id),
@@ -67,6 +118,7 @@ function normalizeSale(row, items = row.items || []) {
     paymentMethod: row.payment_method ?? row.paymentMethod,
     total: Number(row.total),
     items: items.map((item) => ({
+      lineId: item.id ?? item.line_id ?? item.lineId,
       itemId: item.item_id ?? item.itemId,
       name: item.item_name ?? item.name,
       unit: item.unit,
@@ -74,6 +126,9 @@ function normalizeSale(row, items = row.items || []) {
       unitPrice: Number(item.unit_price ?? item.unitPrice),
       lineTotal: Number(item.line_total ?? item.lineTotal),
     })),
+    refunds: normalizedRefunds,
+    refundedTotal,
+    refundableTotal: Math.max(Number(row.total) - refundedTotal, 0),
     mpOrderId: row.mp_order_id ?? row.mpOrderId ?? null,
     mpPaymentId: row.mp_payment_id ?? row.mpPaymentId ?? null,
     mpStatus: row.mp_status ?? row.mpStatus ?? null,
@@ -112,6 +167,14 @@ function ensureFileShape(data) {
   for (const item of data.items) {
     item.price = Number(item.price || 0)
     item.sellable = Boolean(item.sellable)
+  }
+  for (const sale of data.sales) {
+    sale.refunds ||= []
+    for (const line of sale.items || []) line.lineId ||= crypto.randomUUID()
+    for (const refund of sale.refunds) {
+      refund.items ||= []
+      refund.creditNote ||= null
+    }
   }
   return data
 }
@@ -161,6 +224,50 @@ export async function initializeStore() {
         quantity NUMERIC(12,2) NOT NULL CHECK (quantity > 0),
         unit_price NUMERIC(12,0) NOT NULL CHECK (unit_price >= 0),
         line_total NUMERIC(12,0) NOT NULL CHECK (line_total >= 0)
+      );
+      CREATE TABLE IF NOT EXISTS refunds (
+        id UUID PRIMARY KEY,
+        sale_id UUID NOT NULL REFERENCES sales(id) ON DELETE CASCADE,
+        status TEXT NOT NULL CHECK (status IN ('pending','processed','failed')),
+        amount NUMERIC(12,0) NOT NULL CHECK (amount > 0),
+        reason TEXT NOT NULL DEFAULT '',
+        restock BOOLEAN NOT NULL DEFAULT TRUE,
+        credit_note_required BOOLEAN NOT NULL DEFAULT FALSE,
+        original_document_type TEXT NOT NULL DEFAULT '',
+        original_folio TEXT NOT NULL DEFAULT '',
+        mp_refund_id TEXT UNIQUE,
+        mp_status TEXT,
+        error_detail TEXT NOT NULL DEFAULT '',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        processed_at TIMESTAMPTZ
+      );
+      CREATE TABLE IF NOT EXISTS refund_items (
+        id UUID PRIMARY KEY,
+        refund_id UUID NOT NULL REFERENCES refunds(id) ON DELETE CASCADE,
+        sale_item_id UUID REFERENCES sale_items(id) ON DELETE SET NULL,
+        item_id UUID REFERENCES items(id) ON DELETE SET NULL,
+        item_name TEXT NOT NULL,
+        quantity NUMERIC(12,2) NOT NULL CHECK (quantity > 0),
+        unit_price NUMERIC(12,0) NOT NULL CHECK (unit_price >= 0),
+        line_total NUMERIC(12,0) NOT NULL CHECK (line_total >= 0),
+        restocked BOOLEAN NOT NULL DEFAULT FALSE
+      );
+      CREATE TABLE IF NOT EXISTS tax_documents (
+        id UUID PRIMARY KEY,
+        sale_id UUID NOT NULL REFERENCES sales(id) ON DELETE CASCADE,
+        refund_id UUID NOT NULL UNIQUE REFERENCES refunds(id) ON DELETE CASCADE,
+        type TEXT NOT NULL CHECK (type IN ('credit_note')),
+        status TEXT NOT NULL CHECK (status IN ('pending','issued','failed')),
+        mode TEXT NOT NULL DEFAULT 'manual' CHECK (mode IN ('manual','sii_own')),
+        original_document_type TEXT NOT NULL DEFAULT '',
+        original_folio TEXT NOT NULL DEFAULT '',
+        folio TEXT NOT NULL DEFAULT '',
+        sii_track_id TEXT NOT NULL DEFAULT '',
+        error_detail TEXT NOT NULL DEFAULT '',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        issued_at TIMESTAMPTZ
       );
       CREATE TABLE IF NOT EXISTS movements (
         id UUID PRIMARY KEY,
@@ -212,6 +319,9 @@ export async function initializeStore() {
       CREATE INDEX IF NOT EXISTS sales_created_at_idx ON sales(created_at DESC);
       CREATE INDEX IF NOT EXISTS sales_mp_order_id_idx ON sales(mp_order_id);
       CREATE INDEX IF NOT EXISTS sale_items_sale_id_idx ON sale_items(sale_id);
+      CREATE INDEX IF NOT EXISTS refunds_sale_id_idx ON refunds(sale_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS refund_items_refund_id_idx ON refund_items(refund_id);
+      CREATE INDEX IF NOT EXISTS tax_documents_sale_id_idx ON tax_documents(sale_id, created_at DESC);
       CREATE INDEX IF NOT EXISTS cash_closures_business_date_idx ON cash_closures(business_date DESC);
     `)
     return
@@ -442,7 +552,8 @@ function reserveSaleInFile(data, requested, paymentMethod) {
     status: paymentMethod === 'cash' ? 'paid' : 'pending',
     paymentMethod,
     total,
-    items: lines.map(({ item, quantity, unitPrice, lineTotal }) => ({ itemId: item.id, name: item.name, unit: item.unit, quantity, unitPrice, lineTotal })),
+    items: lines.map(({ item, quantity, unitPrice, lineTotal }) => ({ lineId: crypto.randomUUID(), itemId: item.id, name: item.name, unit: item.unit, quantity, unitPrice, lineTotal })),
+    refunds: [],
     mpOrderId: null,
     mpPaymentId: null,
     mpStatus: null,
@@ -484,11 +595,12 @@ export async function createSale(requested, paymentMethod) {
        VALUES ($1,$2,$3,$4,TRUE,CASE WHEN $2='paid' THEN NOW() ELSE NULL END) RETURNING *`,
       [id, status, paymentMethod, total],
     )
-    for (const line of lines) {
+    const persistedLines = lines.map((line) => ({ ...line, lineId: crypto.randomUUID() }))
+    for (const line of persistedLines) {
       await client.query(
         `INSERT INTO sale_items (id, sale_id, item_id, item_name, unit, quantity, unit_price, line_total)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-        [crypto.randomUUID(), id, line.item.id, line.item.name, line.item.unit, line.quantity, line.unitPrice, line.lineTotal],
+        [line.lineId, id, line.item.id, line.item.name, line.item.unit, line.quantity, line.unitPrice, line.lineTotal],
       )
       const updated = await client.query(
         'UPDATE items SET quantity=quantity-$2, updated_at=NOW() WHERE id=$1 RETURNING quantity',
@@ -502,8 +614,8 @@ export async function createSale(requested, paymentMethod) {
       )
     }
     await client.query('COMMIT')
-    return normalizeSale(saleResult.rows[0], lines.map((line) => ({
-      item_id: line.item.id, item_name: line.item.name, unit: line.item.unit,
+    return normalizeSale(saleResult.rows[0], persistedLines.map((line) => ({
+      id: line.lineId, item_id: line.item.id, item_name: line.item.name, unit: line.item.unit,
       quantity: line.quantity, unit_price: line.unitPrice, line_total: line.lineTotal,
     })))
   } catch (error) {
@@ -537,7 +649,8 @@ export async function attachPointOrder(saleId, order) {
 }
 
 function localStatusForPoint(order) {
-  if (order.status === 'processed' && (order.status_detail === 'accredited' || order.transactions?.payments?.[0]?.status_detail === 'accredited')) return 'paid'
+  if (order.status === 'processed' && ['accredited', 'partially_refunded'].includes(order.status_detail)) return 'paid'
+  if (order.status === 'processed' && ['accredited', 'partially_refunded'].includes(order.transactions?.payments?.[0]?.status_detail)) return 'paid'
   if (order.status === 'canceled') return 'cancelled'
   if (order.status === 'failed') return 'failed'
   if (order.status === 'expired') return 'expired'
@@ -637,17 +750,343 @@ async function updatePostgresSaleStatus(saleId, status, mpStatus, mpStatusDetail
   }
 }
 
+function refundConflict(message) {
+  return Object.assign(new Error(message), { status: 409 })
+}
+
+function refundLinesForSale(sale, requested) {
+  if (sale.status !== 'paid') throw refundConflict('Only an approved sale can be refunded.')
+  if (sale.refunds.some((refund) => refund.status === 'pending')) throw refundConflict('This sale already has a refund in progress.')
+  if (sale.refundableTotal <= 0) throw refundConflict('This sale has already been refunded in full.')
+
+  const refundedByLine = new Map()
+  for (const refund of sale.refunds.filter((entry) => entry.status === 'processed')) {
+    for (const line of refund.items) refundedByLine.set(line.lineId, (refundedByLine.get(line.lineId) || 0) + line.quantity)
+  }
+  const saleLines = new Map(sale.items.map((line) => [line.lineId, line]))
+  const combined = new Map()
+  for (const line of requested) combined.set(line.lineId, (combined.get(line.lineId) || 0) + Number(line.quantity))
+  const lines = [...combined.entries()].map(([lineId, quantity]) => {
+    const saleLine = saleLines.get(lineId)
+    if (!saleLine) throw Object.assign(new Error('One of the selected sale lines no longer exists.'), { status: 400 })
+    const remaining = Number(saleLine.quantity) - Number(refundedByLine.get(lineId) || 0)
+    if (!Number.isFinite(quantity) || quantity <= 0 || quantity > remaining) {
+      throw Object.assign(new Error(`The refundable quantity for ${saleLine.name} is ${remaining}.`), { status: 400 })
+    }
+    return {
+      lineId,
+      itemId: saleLine.itemId || null,
+      name: saleLine.name,
+      quantity,
+      unitPrice: saleLine.unitPrice,
+      lineTotal: Math.round(saleLine.unitPrice * quantity),
+      restocked: false,
+    }
+  })
+  const amount = lines.reduce((sum, line) => sum + line.lineTotal, 0)
+  if (!lines.length || amount <= 0 || amount > sale.refundableTotal) throw Object.assign(new Error('Select at least one refundable product.'), { status: 400 })
+  return { lines, amount, full: sale.refundedTotal + amount >= sale.total }
+}
+
+function refundInputRecord(saleId, input, calculated) {
+  const now = new Date().toISOString()
+  return {
+    id: crypto.randomUUID(),
+    saleId,
+    status: 'pending',
+    amount: calculated.amount,
+    reason: input.reason,
+    restock: input.restock,
+    creditNoteRequired: input.creditNoteRequired,
+    originalDocumentType: input.originalDocumentType,
+    originalFolio: input.originalFolio,
+    mpRefundId: null,
+    mpStatus: null,
+    errorDetail: '',
+    items: calculated.lines,
+    creditNote: null,
+    createdAt: now,
+    updatedAt: now,
+    processedAt: null,
+  }
+}
+
+export async function prepareRefund(saleId, input) {
+  if (!pool) {
+    return mutateFileData((data) => {
+      const storedSale = data.sales.find((entry) => entry.id === saleId)
+      if (!storedSale) return null
+      const sale = normalizeSale(storedSale)
+      const calculated = refundLinesForSale(sale, input.items)
+      const refund = refundInputRecord(saleId, input, calculated)
+      storedSale.refunds.unshift(refund)
+      storedSale.updatedAt = refund.updatedAt
+      return { sale: normalizeSale(storedSale), refund: normalizeRefund(refund), full: calculated.full }
+    })
+  }
+
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    const saleResult = await client.query('SELECT * FROM sales WHERE id=$1 FOR UPDATE', [saleId])
+    if (!saleResult.rows[0]) { await client.query('ROLLBACK'); return null }
+    const [itemResult, refundResult, refundItemResult, creditNoteResult] = await Promise.all([
+      client.query('SELECT * FROM sale_items WHERE sale_id=$1 ORDER BY item_name', [saleId]),
+      client.query('SELECT * FROM refunds WHERE sale_id=$1 ORDER BY created_at DESC FOR UPDATE', [saleId]),
+      client.query(`SELECT ri.* FROM refund_items ri JOIN refunds r ON r.id=ri.refund_id WHERE r.sale_id=$1`, [saleId]),
+      client.query('SELECT * FROM tax_documents WHERE sale_id=$1', [saleId]),
+    ])
+    const itemsByRefund = new Map()
+    for (const item of refundItemResult.rows) {
+      const entries = itemsByRefund.get(item.refund_id) || []
+      entries.push(item)
+      itemsByRefund.set(item.refund_id, entries)
+    }
+    const creditNoteByRefund = new Map(creditNoteResult.rows.map((document) => [document.refund_id, document]))
+    const refunds = refundResult.rows.map((refund) => ({
+      ...refund,
+      items: itemsByRefund.get(refund.id) || [],
+      creditNote: creditNoteByRefund.get(refund.id) || null,
+    }))
+    const sale = normalizeSale(saleResult.rows[0], itemResult.rows, refunds)
+    const calculated = refundLinesForSale(sale, input.items)
+    const refund = refundInputRecord(saleId, input, calculated)
+    await client.query(
+      `INSERT INTO refunds (
+        id, sale_id, status, amount, reason, restock, credit_note_required,
+        original_document_type, original_folio, created_at, updated_at
+      ) VALUES ($1,$2,'pending',$3,$4,$5,$6,$7,$8,$9,$9)`,
+      [refund.id, saleId, refund.amount, refund.reason, refund.restock, refund.creditNoteRequired,
+        refund.originalDocumentType, refund.originalFolio, refund.createdAt],
+    )
+    for (const line of refund.items) {
+      await client.query(
+        `INSERT INTO refund_items (
+          id, refund_id, sale_item_id, item_id, item_name, quantity, unit_price, line_total, restocked
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,FALSE)`,
+        [crypto.randomUUID(), refund.id, line.lineId, line.itemId, line.name, line.quantity, line.unitPrice, line.lineTotal],
+      )
+    }
+    await client.query('COMMIT')
+    const hydrated = await getSale(saleId)
+    return { sale: hydrated, refund: hydrated.refunds.find((entry) => entry.id === refund.id), full: calculated.full }
+  } catch (error) {
+    await client.query('ROLLBACK')
+    throw error
+  } finally {
+    client.release()
+  }
+}
+
+function pointRefundIdentifier(order) {
+  const refunds = order?.transactions?.refunds || []
+  return refunds.at(-1)?.id || null
+}
+
+export async function completeRefund(refundId, order = null) {
+  const mpRefundId = pointRefundIdentifier(order)
+  const mpStatus = order?.transactions?.refunds?.at(-1)?.status || order?.status || 'processed'
+  if (!pool) {
+    return mutateFileData((data) => {
+      const sale = data.sales.find((entry) => entry.refunds.some((refund) => refund.id === refundId))
+      if (!sale) return null
+      const refund = sale.refunds.find((entry) => entry.id === refundId)
+      if (refund.status === 'processed') return normalizeSale(sale)
+      if (refund.status !== 'pending') throw refundConflict('This refund can no longer be completed.')
+      const now = new Date().toISOString()
+      if (refund.restock) {
+        for (const line of refund.items) {
+          const item = data.items.find((entry) => entry.id === line.itemId)
+          if (!item) continue
+          item.quantity = Number(item.quantity) + Number(line.quantity)
+          item.updatedAt = now
+          line.restocked = true
+          data.movements.unshift({
+            id: crypto.randomUUID(), itemId: item.id, itemName: item.name, saleId: sale.id, type: 'stock_in',
+            quantity: Number(line.quantity), balanceAfter: item.quantity,
+            note: `Refund #${shortId(refund.id)} — stock restored`, createdAt: now,
+          })
+        }
+      }
+      Object.assign(refund, { status: 'processed', mpRefundId, mpStatus, errorDetail: '', updatedAt: now, processedAt: now })
+      if (refund.creditNoteRequired) {
+        refund.creditNote = {
+          id: crypto.randomUUID(), status: 'pending', mode: 'manual',
+          originalDocumentType: refund.originalDocumentType, originalFolio: refund.originalFolio,
+          folio: '', siiTrackId: '', errorDetail: '', createdAt: now, updatedAt: now, issuedAt: null,
+        }
+      }
+      const refundedTotal = sale.refunds.filter((entry) => entry.status === 'processed').reduce((sum, entry) => sum + Number(entry.amount), 0)
+      sale.status = refundedTotal >= Number(sale.total) ? 'refunded' : 'paid'
+      if (order) {
+        sale.mpStatus = order.status || sale.mpStatus
+        sale.mpStatusDetail = order.status_detail || sale.mpStatusDetail
+      }
+      sale.updatedAt = now
+      return normalizeSale(sale)
+    })
+  }
+
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    const refundResult = await client.query('SELECT * FROM refunds WHERE id=$1 FOR UPDATE', [refundId])
+    const refund = refundResult.rows[0]
+    if (!refund) { await client.query('ROLLBACK'); return null }
+    if (refund.status === 'processed') { await client.query('COMMIT'); return getSale(refund.sale_id) }
+    if (refund.status !== 'pending') throw refundConflict('This refund can no longer be completed.')
+    const saleResult = await client.query('SELECT * FROM sales WHERE id=$1 FOR UPDATE', [refund.sale_id])
+    const sale = saleResult.rows[0]
+    const itemResult = await client.query('SELECT * FROM refund_items WHERE refund_id=$1 ORDER BY item_name FOR UPDATE', [refundId])
+    if (refund.restock) {
+      for (const line of itemResult.rows) {
+        if (!line.item_id) continue
+        const updated = await client.query('UPDATE items SET quantity=quantity+$2, updated_at=NOW() WHERE id=$1 RETURNING quantity,name', [line.item_id, line.quantity])
+        if (!updated.rows[0]) continue
+        await client.query('UPDATE refund_items SET restocked=TRUE WHERE id=$1', [line.id])
+        await client.query(
+          `INSERT INTO movements (id, item_id, item_name, type, quantity, balance_after, note, sale_id)
+           VALUES ($1,$2,$3,'stock_in',$4,$5,$6,$7)`,
+          [crypto.randomUUID(), line.item_id, line.item_name, line.quantity, updated.rows[0].quantity,
+            `Refund #${shortId(refundId)} — stock restored`, refund.sale_id],
+        )
+      }
+    }
+    await client.query(
+      `UPDATE refunds SET status='processed', mp_refund_id=$2, mp_status=$3, error_detail='',
+       processed_at=NOW(), updated_at=NOW() WHERE id=$1`,
+      [refundId, mpRefundId, mpStatus],
+    )
+    if (refund.credit_note_required) {
+      await client.query(
+        `INSERT INTO tax_documents (
+          id, sale_id, refund_id, type, status, mode, original_document_type, original_folio
+        ) VALUES ($1,$2,$3,'credit_note','pending','manual',$4,$5)
+        ON CONFLICT (refund_id) DO NOTHING`,
+        [crypto.randomUUID(), refund.sale_id, refundId, refund.original_document_type, refund.original_folio],
+      )
+    }
+    const totalResult = await client.query(
+      `SELECT COALESCE(SUM(amount),0) AS total FROM refunds WHERE sale_id=$1 AND status='processed'`,
+      [refund.sale_id],
+    )
+    const fullyRefunded = Number(totalResult.rows[0].total) >= Number(sale.total)
+    await client.query(
+      `UPDATE sales SET status=$2, mp_status=COALESCE($3,mp_status), mp_status_detail=COALESCE($4,mp_status_detail), updated_at=NOW() WHERE id=$1`,
+      [refund.sale_id, fullyRefunded ? 'refunded' : 'paid', order?.status || null, order?.status_detail || null],
+    )
+    await client.query('COMMIT')
+    return getSale(refund.sale_id)
+  } catch (error) {
+    await client.query('ROLLBACK')
+    throw error
+  } finally {
+    client.release()
+  }
+}
+
+export async function failRefund(refundId, detail) {
+  const message = String(detail || 'refund_failed').slice(0, 500)
+  if (!pool) {
+    return mutateFileData((data) => {
+      const sale = data.sales.find((entry) => entry.refunds.some((refund) => refund.id === refundId))
+      if (!sale) return null
+      const refund = sale.refunds.find((entry) => entry.id === refundId)
+      if (refund.status === 'pending') Object.assign(refund, { status: 'failed', errorDetail: message, updatedAt: new Date().toISOString() })
+      return normalizeSale(sale)
+    })
+  }
+  const { rows } = await pool.query(
+    `UPDATE refunds SET status='failed', error_detail=$2, updated_at=NOW() WHERE id=$1 AND status='pending' RETURNING sale_id`,
+    [refundId, message],
+  )
+  return rows[0] ? getSale(rows[0].sale_id) : null
+}
+
+export async function recordCreditNote(saleId, refundId, input) {
+  if (!pool) {
+    return mutateFileData((data) => {
+      const sale = data.sales.find((entry) => entry.id === saleId)
+      const refund = sale?.refunds.find((entry) => entry.id === refundId)
+      if (!refund || refund.status !== 'processed') return null
+      const now = new Date().toISOString()
+      refund.creditNote = {
+        ...(refund.creditNote || { id: crypto.randomUUID(), createdAt: now }),
+        status: 'issued', mode: 'manual', originalDocumentType: input.originalDocumentType,
+        originalFolio: input.originalFolio, folio: input.folio, siiTrackId: input.siiTrackId,
+        errorDetail: '', updatedAt: now, issuedAt: now,
+      }
+      refund.creditNoteRequired = true
+      return normalizeSale(sale)
+    })
+  }
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    const refundResult = await client.query('SELECT * FROM refunds WHERE id=$1 AND sale_id=$2 AND status=\'processed\' FOR UPDATE', [refundId, saleId])
+    if (!refundResult.rows[0]) { await client.query('ROLLBACK'); return null }
+    await client.query(
+      `INSERT INTO tax_documents (
+        id, sale_id, refund_id, type, status, mode, original_document_type, original_folio,
+        folio, sii_track_id, issued_at, updated_at
+      ) VALUES ($1,$2,$3,'credit_note','issued','manual',$4,$5,$6,$7,NOW(),NOW())
+      ON CONFLICT (refund_id) DO UPDATE SET
+        status='issued', mode='manual', original_document_type=EXCLUDED.original_document_type,
+        original_folio=EXCLUDED.original_folio, folio=EXCLUDED.folio,
+        sii_track_id=EXCLUDED.sii_track_id, error_detail='', issued_at=NOW(), updated_at=NOW()`,
+      [crypto.randomUUID(), saleId, refundId, input.originalDocumentType, input.originalFolio, input.folio, input.siiTrackId],
+    )
+    await client.query(
+      `UPDATE refunds SET credit_note_required=TRUE, original_document_type=$2, original_folio=$3, updated_at=NOW() WHERE id=$1`,
+      [refundId, input.originalDocumentType, input.originalFolio],
+    )
+    await client.query('COMMIT')
+    return getSale(saleId)
+  } catch (error) {
+    await client.query('ROLLBACK')
+    throw error
+  } finally {
+    client.release()
+  }
+}
+
+async function hydratePostgresSales(rows) {
+  if (!rows.length) return []
+  const saleIds = rows.map((row) => row.id)
+  const [itemResult, refundResult, taxDocumentResult] = await Promise.all([
+    pool.query('SELECT * FROM sale_items WHERE sale_id = ANY($1::uuid[]) ORDER BY item_name', [saleIds]),
+    pool.query('SELECT * FROM refunds WHERE sale_id = ANY($1::uuid[]) ORDER BY created_at DESC', [saleIds]),
+    pool.query('SELECT * FROM tax_documents WHERE sale_id = ANY($1::uuid[]) ORDER BY created_at DESC', [saleIds]),
+  ])
+  const refundIds = refundResult.rows.map((refund) => refund.id)
+  const refundItemResult = refundIds.length
+    ? await pool.query('SELECT * FROM refund_items WHERE refund_id = ANY($1::uuid[]) ORDER BY item_name', [refundIds])
+    : { rows: [] }
+
+  const itemsBySale = new Map(saleIds.map((id) => [id, []]))
+  const refundsBySale = new Map(saleIds.map((id) => [id, []]))
+  const itemsByRefund = new Map(refundIds.map((id) => [id, []]))
+  const creditNoteByRefund = new Map(taxDocumentResult.rows.map((document) => [document.refund_id, document]))
+  for (const item of itemResult.rows) itemsBySale.get(item.sale_id)?.push(item)
+  for (const item of refundItemResult.rows) itemsByRefund.get(item.refund_id)?.push(item)
+  for (const refund of refundResult.rows) {
+    refundsBySale.get(refund.sale_id)?.push({
+      ...refund,
+      items: itemsByRefund.get(refund.id) || [],
+      creditNote: creditNoteByRefund.get(refund.id) || null,
+    })
+  }
+  return rows.map((row) => normalizeSale(row, itemsBySale.get(row.id) || [], refundsBySale.get(row.id) || []))
+}
+
 export async function getSale(id) {
   if (!pool) {
     const data = await readFileData()
     const sale = data.sales.find((entry) => entry.id === id)
     return sale ? normalizeSale(sale) : null
   }
-  const [saleResult, itemResult] = await Promise.all([
-    pool.query('SELECT * FROM sales WHERE id=$1', [id]),
-    pool.query('SELECT * FROM sale_items WHERE sale_id=$1 ORDER BY item_name', [id]),
-  ])
-  return saleResult.rows[0] ? normalizeSale(saleResult.rows[0], itemResult.rows) : null
+  const saleResult = await pool.query('SELECT * FROM sales WHERE id=$1', [id])
+  return saleResult.rows[0] ? (await hydratePostgresSales(saleResult.rows))[0] : null
 }
 
 export async function getSaleByPointOrder(orderId) {
@@ -665,12 +1104,8 @@ export async function listSales(limit = 50) {
     const data = await readFileData()
     return data.sales.slice(0, limit).map((sale) => normalizeSale(sale))
   }
-  const { rows } = await pool.query(`
-    SELECT s.*, COALESCE(json_agg(si ORDER BY si.item_name) FILTER (WHERE si.id IS NOT NULL), '[]') AS items
-    FROM sales s LEFT JOIN sale_items si ON si.sale_id=s.id
-    GROUP BY s.id ORDER BY s.created_at DESC LIMIT $1
-  `, [limit])
-  return rows.map((row) => normalizeSale(row, row.items))
+  const { rows } = await pool.query('SELECT * FROM sales ORDER BY created_at DESC LIMIT $1', [limit])
+  return hydratePostgresSales(rows)
 }
 
 function saleTimestamp(sale) {
@@ -695,11 +1130,36 @@ function localDateKey(value) {
   return `${parts.year}-${parts.month}-${parts.day}`
 }
 
-function paidSummary(sales) {
-  const revenue = sales.reduce((sum, sale) => sum + sale.total, 0)
-  const itemsSold = sales.reduce((sum, sale) => sum + sale.items.reduce((lineSum, line) => lineSum + line.quantity, 0), 0)
+function completedSale(sale) {
+  return sale.status === 'paid' || sale.status === 'refunded'
+}
+
+function refundTimestamp(refund) {
+  return new Date(refund.processedAt || refund.updatedAt || refund.createdAt).getTime()
+}
+
+function refundIsWithin(refund, from, to) {
+  const timestamp = refundTimestamp(refund)
+  return refund.status === 'processed' && timestamp >= from.getTime() && timestamp < to.getTime()
+}
+
+function refundsWithin(sales, from, to) {
+  return sales.flatMap((sale) => sale.refunds
+    .filter((refund) => refundIsWithin(refund, from, to))
+    .map((refund) => ({ ...refund, paymentMethod: sale.paymentMethod, saleId: sale.id })))
+}
+
+function paidSummary(sales, refunds = []) {
+  const grossRevenue = sales.reduce((sum, sale) => sum + sale.total, 0)
+  const refundedTotal = refunds.reduce((sum, refund) => sum + refund.amount, 0)
+  const revenue = grossRevenue - refundedTotal
+  const soldItems = sales.reduce((sum, sale) => sum + sale.items.reduce((lineSum, line) => lineSum + line.quantity, 0), 0)
+  const refundedItems = refunds.reduce((sum, refund) => sum + refund.items.reduce((lineSum, line) => lineSum + line.quantity, 0), 0)
+  const itemsSold = soldItems - refundedItems
   return {
     revenue,
+    grossRevenue,
+    refundedTotal,
     transactions: sales.length,
     averageTicket: sales.length ? Math.round(revenue / sales.length) : 0,
     itemsSold,
@@ -709,15 +1169,22 @@ function paidSummary(sales) {
 
 export function buildSalesMetrics(sales, { from, to, previousFrom, previousTo, todayFrom, todayTo }) {
   const currentSales = sales.filter((sale) => isWithin(sale, from, to))
-  const currentPaid = currentSales.filter((sale) => sale.status === 'paid')
-  const previousPaid = sales.filter((sale) => sale.status === 'paid' && isWithin(sale, previousFrom, previousTo))
-  const todayPaid = sales.filter((sale) => sale.status === 'paid' && isWithin(sale, todayFrom, todayTo))
-  const summary = paidSummary(currentPaid)
-  const previous = paidSummary(previousPaid)
+  const currentPaid = currentSales.filter(completedSale)
+  const previousPaid = sales.filter((sale) => completedSale(sale) && isWithin(sale, previousFrom, previousTo))
+  const todayPaid = sales.filter((sale) => completedSale(sale) && isWithin(sale, todayFrom, todayTo))
+  const currentRefunds = refundsWithin(sales, from, to)
+  const previousRefunds = refundsWithin(sales, previousFrom, previousTo)
+  const todayRefunds = refundsWithin(sales, todayFrom, todayTo)
+  const summary = paidSummary(currentPaid, currentRefunds)
+  const previous = paidSummary(previousPaid, previousRefunds)
   const cashPaid = currentPaid.filter((sale) => sale.paymentMethod === 'cash')
   const cardPaid = currentPaid.filter((sale) => sale.paymentMethod === 'card')
+  const cashRefunds = currentRefunds.filter((refund) => refund.paymentMethod === 'cash')
+  const cardRefunds = currentRefunds.filter((refund) => refund.paymentMethod === 'card')
   const todayCash = todayPaid.filter((sale) => sale.paymentMethod === 'cash')
   const todayCard = todayPaid.filter((sale) => sale.paymentMethod === 'card')
+  const todayCashRefunds = todayRefunds.filter((refund) => refund.paymentMethod === 'cash')
+  const todayCardRefunds = todayRefunds.filter((refund) => refund.paymentMethod === 'card')
   const dailyMap = new Map()
   const hourly = Array.from({ length: 24 }, (_, hour) => ({ hour, revenue: 0, transactions: 0 }))
   const products = new Map()
@@ -744,7 +1211,27 @@ export function buildSalesMetrics(sales, { from, to, previousFrom, previousTo, t
     }
   }
 
+  for (const refund of currentRefunds) {
+    const timestamp = refund.processedAt || refund.updatedAt || refund.createdAt
+    const day = localDateKey(timestamp)
+    const daily = dailyMap.get(day) || { date: day, revenue: 0, transactions: 0 }
+    daily.revenue -= refund.amount
+    dailyMap.set(day, daily)
+
+    const hour = Number(hourFormatter.format(new Date(timestamp)))
+    if (hourly[hour]) hourly[hour].revenue -= refund.amount
+
+    for (const line of refund.items) {
+      const key = line.itemId || line.name
+      const product = products.get(key) || { itemId: line.itemId || null, name: line.name, quantity: 0, revenue: 0 }
+      product.quantity -= line.quantity
+      product.revenue -= line.lineTotal
+      products.set(key, product)
+    }
+  }
+
   const topProducts = [...products.values()]
+    .filter((product) => product.quantity > 0 || product.revenue > 0)
     .sort((a, b) => b.revenue - a.revenue || b.quantity - a.quantity)
     .slice(0, 8)
     .map((product) => ({ ...product, revenueShare: summary.revenue ? Number(((product.revenue / summary.revenue) * 100).toFixed(1)) : 0 }))
@@ -756,20 +1243,20 @@ export function buildSalesMetrics(sales, { from, to, previousFrom, previousTo, t
       revenueChangePct: previous.revenue > 0 ? Number((((summary.revenue - previous.revenue) / previous.revenue) * 100).toFixed(1)) : null,
       pendingPoint: currentSales.filter((sale) => sale.paymentMethod === 'card' && sale.status === 'pending').length,
       failedPayments: currentSales.filter((sale) => ['failed', 'cancelled', 'expired'].includes(sale.status)).length,
-      refundedTotal: currentSales.filter((sale) => sale.status === 'refunded').reduce((sum, sale) => sum + sale.total, 0),
+      refundedTotal: currentRefunds.reduce((sum, refund) => sum + refund.amount, 0),
     },
     paymentMethods: {
-      cash: paidSummary(cashPaid),
-      card: paidSummary(cardPaid),
+      cash: paidSummary(cashPaid, cashRefunds),
+      card: paidSummary(cardPaid, cardRefunds),
     },
     daily: [...dailyMap.values()].sort((a, b) => a.date.localeCompare(b.date)),
     hourly,
     topProducts,
     today: {
-      ...paidSummary(todayPaid),
-      cashRevenue: paidSummary(todayCash).revenue,
+      ...paidSummary(todayPaid, todayRefunds),
+      cashRevenue: paidSummary(todayCash, todayCashRefunds).revenue,
       cashTransactions: todayCash.length,
-      cardRevenue: paidSummary(todayCard).revenue,
+      cardRevenue: paidSummary(todayCard, todayCardRefunds).revenue,
       cardTransactions: todayCard.length,
     },
   }
@@ -778,15 +1265,20 @@ export function buildSalesMetrics(sales, { from, to, previousFrom, previousTo, t
 async function listSalesBetween(from, to) {
   if (!pool) {
     const data = await readFileData()
-    return data.sales.map((sale) => normalizeSale(sale)).filter((sale) => isWithin(sale, from, to))
+    return data.sales.map((sale) => normalizeSale(sale)).filter((sale) => (
+      isWithin(sale, from, to) || sale.refunds.some((refund) => refundIsWithin(refund, from, to))
+    ))
   }
   const { rows } = await pool.query(`
-    SELECT s.*, COALESCE(json_agg(si ORDER BY si.item_name) FILTER (WHERE si.id IS NOT NULL), '[]') AS items
-    FROM sales s LEFT JOIN sale_items si ON si.sale_id=s.id
-    WHERE COALESCE(s.paid_at, s.created_at) >= $1 AND COALESCE(s.paid_at, s.created_at) < $2
-    GROUP BY s.id ORDER BY s.created_at DESC
+    SELECT s.* FROM sales s
+    WHERE (COALESCE(s.paid_at, s.created_at) >= $1 AND COALESCE(s.paid_at, s.created_at) < $2)
+       OR EXISTS (
+         SELECT 1 FROM refunds r
+         WHERE r.sale_id=s.id AND r.status='processed' AND r.processed_at >= $1 AND r.processed_at < $2
+       )
+    ORDER BY s.created_at DESC
   `, [from.toISOString(), to.toISOString()])
-  return rows.map((row) => normalizeSale(row, row.items))
+  return hydratePostgresSales(rows)
 }
 
 export async function getCashClosure(businessDate) {
@@ -806,10 +1298,13 @@ export async function getSalesMetrics(period) {
   return { ...metrics, cashClosure: await getCashClosure(period.businessDate) }
 }
 
-function closureSnapshot(sales, input) {
-  const paid = sales.filter((sale) => sale.status === 'paid')
-  const cashSales = paid.filter((sale) => sale.paymentMethod === 'cash').reduce((sum, sale) => sum + sale.total, 0)
-  const cardSales = paid.filter((sale) => sale.paymentMethod === 'card').reduce((sum, sale) => sum + sale.total, 0)
+function closureSnapshot(sales, input, from, to) {
+  const paid = sales.filter((sale) => completedSale(sale) && isWithin(sale, from, to))
+  const refunds = refundsWithin(sales, from, to)
+  const cashRefunds = refunds.filter((refund) => refund.paymentMethod === 'cash').reduce((sum, refund) => sum + refund.amount, 0)
+  const cardRefunds = refunds.filter((refund) => refund.paymentMethod === 'card').reduce((sum, refund) => sum + refund.amount, 0)
+  const cashSales = paid.filter((sale) => sale.paymentMethod === 'cash').reduce((sum, sale) => sum + sale.total, 0) - cashRefunds
+  const cardSales = paid.filter((sale) => sale.paymentMethod === 'card').reduce((sum, sale) => sum + sale.total, 0) - cardRefunds
   const totalSales = cashSales + cardSales
   const expectedCash = input.openingCash + cashSales + input.cashAdjustments
   return {
@@ -825,7 +1320,7 @@ export async function saveCashClosure(input, todayFrom, todayTo) {
     return mutateFileData((data) => {
       const todaySales = data.sales.map((sale) => normalizeSale(sale)).filter((sale) => isWithin(sale, todayFrom, todayTo))
       const existingIndex = data.cashClosures.findIndex((closure) => closure.businessDate === input.businessDate)
-      const closure = closureSnapshot(todaySales, { ...input, id: existingIndex >= 0 ? data.cashClosures[existingIndex].id : null })
+      const closure = closureSnapshot(todaySales, { ...input, id: existingIndex >= 0 ? data.cashClosures[existingIndex].id : null }, todayFrom, todayTo)
       if (existingIndex >= 0) data.cashClosures[existingIndex] = closure
       else data.cashClosures.unshift(closure)
       return normalizeCashClosure(closure)
@@ -833,7 +1328,7 @@ export async function saveCashClosure(input, todayFrom, todayTo) {
   }
 
   const todaySales = await listSalesBetween(todayFrom, todayTo)
-  const closure = closureSnapshot(todaySales, input)
+  const closure = closureSnapshot(todaySales, input, todayFrom, todayTo)
   const { rows } = await pool.query(`
     INSERT INTO cash_closures (
       id, business_date, opening_cash, cash_adjustments, counted_cash, cash_sales, card_sales,

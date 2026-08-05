@@ -5,12 +5,12 @@ import express from 'express'
 import { authStatus, login, logout, pointAccessIsProtected, requireAuth } from './auth.js'
 import {
   cancelPointOrder, createPointOrder, getConfiguredTerminal, getPointOrder,
-  pointConfiguration, validatePointWebhook,
+  pointConfiguration, refundPointOrder, validatePointWebhook,
 } from './mercadopago.js'
 import {
-  adjustItem, attachPointOrder, closeStore, createItem, createSale, deleteItem, getSale,
+  adjustItem, attachPointOrder, closeStore, completeRefund, createItem, createSale, deleteItem, failRefund, getSale,
   getSaleByPointOrder, getSalesMetrics, initializeStore, listItems, listMovements, listSales,
-  markCardSaleFailed, saveCashClosure, updateItem, updateSaleFromPoint,
+  markCardSaleFailed, prepareRefund, recordCreditNote, saveCashClosure, updateItem, updateSaleFromPoint,
 } from './store.js'
 import { createDailyReport } from './report.js'
 
@@ -58,6 +58,38 @@ function cleanCart(body) {
     combined.set(itemId, (combined.get(itemId) || 0) + quantity)
   }
   return [...combined.entries()].map(([itemId, quantity]) => ({ itemId, quantity }))
+}
+
+function cleanRefund(body) {
+  if (!Array.isArray(body.items) || body.items.length === 0 || body.items.length > 100) throw badRequest('Select at least one product to refund.')
+  const items = body.items.map((line) => {
+    const lineId = String(line.lineId || '')
+    const quantity = Number(line.quantity)
+    if (!lineId || !Number.isFinite(quantity) || quantity <= 0 || quantity > 10000) throw badRequest('The refund contains an invalid quantity.')
+    return { lineId, quantity }
+  })
+  const originalDocumentType = String(body.originalDocumentType || '')
+  if (originalDocumentType && !['33', '34', '39', '41'].includes(originalDocumentType)) throw badRequest('The original tax document type is invalid.')
+  return {
+    items,
+    reason: String(body.reason || '').trim().slice(0, 300),
+    restock: body.restock !== false,
+    creditNoteRequired: body.creditNoteRequired === true,
+    originalDocumentType,
+    originalFolio: String(body.originalFolio || '').trim().slice(0, 30),
+  }
+}
+
+function cleanCreditNote(body) {
+  const input = {
+    originalDocumentType: String(body.originalDocumentType || ''),
+    originalFolio: String(body.originalFolio || '').trim(),
+    folio: String(body.folio || '').trim(),
+    siiTrackId: String(body.siiTrackId || '').trim().slice(0, 80),
+  }
+  if (!['33', '34', '39', '41'].includes(input.originalDocumentType)) throw badRequest('Select the original tax document type.')
+  if (!/^\d{1,18}$/.test(input.originalFolio) || !/^\d{1,18}$/.test(input.folio)) throw badRequest('Enter valid numeric folios for both tax documents.')
+  return input
 }
 
 function parseInstant(value, name) {
@@ -247,6 +279,51 @@ app.post('/api/sales/:id/cancel', async (req, res, next) => {
     res.json(await updateSaleFromPoint(order))
   } catch (error) { next(error) }
 })
+app.post('/api/sales/:id/refunds', async (req, res, next) => {
+  let prepared
+  try {
+    const existing = await getSale(req.params.id)
+    if (!existing) return res.status(404).json({ error: 'Sale not found.' })
+    if (existing.paymentMethod === 'card') requireProtectedPoint()
+    prepared = await prepareRefund(existing.id, cleanRefund(req.body))
+    if (!prepared) return res.status(404).json({ error: 'Sale not found.' })
+
+    if (existing.paymentMethod === 'cash') {
+      return res.status(201).json(await completeRefund(prepared.refund.id))
+    }
+    if (!existing.mpOrderId) throw Object.assign(new Error('This card sale has no Mercado Pago order to refund.'), { status: 409 })
+    const order = await refundPointOrder(existing.mpOrderId, existing, { ...prepared.refund, full: prepared.full })
+    res.status(201).json(await completeRefund(prepared.refund.id, order))
+  } catch (error) {
+    if (prepared?.refund && !error.uncertain) await failRefund(prepared.refund.id, error.mercadoPagoCode || error.message).catch(console.error)
+    if (prepared?.refund) error.refundId = prepared.refund.id
+    next(error)
+  }
+})
+app.post('/api/sales/:saleId/refunds/:refundId/retry', async (req, res, next) => {
+  try {
+    requireProtectedPoint()
+    const sale = await getSale(req.params.saleId)
+    if (!sale) return res.status(404).json({ error: 'Sale not found.' })
+    const refund = sale.refunds.find((entry) => entry.id === req.params.refundId)
+    if (!refund) return res.status(404).json({ error: 'Refund not found.' })
+    if (sale.paymentMethod !== 'card' || refund.status !== 'pending' || !sale.mpOrderId) {
+      throw Object.assign(new Error('This refund cannot be retried.'), { status: 409 })
+    }
+    const order = await refundPointOrder(sale.mpOrderId, sale, {
+      ...refund,
+      full: sale.refundedTotal + refund.amount >= sale.total,
+    })
+    res.json(await completeRefund(refund.id, order))
+  } catch (error) { next(error) }
+})
+app.patch('/api/sales/:saleId/refunds/:refundId/credit-note', async (req, res, next) => {
+  try {
+    const sale = await recordCreditNote(req.params.saleId, req.params.refundId, cleanCreditNote(req.body))
+    if (!sale) return res.status(404).json({ error: 'Processed refund not found.' })
+    res.json(sale)
+  } catch (error) { next(error) }
+})
 
 app.get('/api/pos/config', (_req, res) => res.json(pointConfiguration()))
 app.get('/api/pos/terminal', async (_req, res, next) => {
@@ -273,6 +350,7 @@ app.use((error, _req, res, _next) => {
   res.status(status).json({
     error: status < 500 || error.status ? error.message : 'Something went wrong. Please try again.',
     ...(error.saleId ? { saleId: error.saleId } : {}),
+    ...(error.refundId ? { refundId: error.refundId } : {}),
     ...(error.uncertain ? { uncertain: true } : {}),
   })
 })

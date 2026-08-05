@@ -6,3 +6,9 @@ data/*.tmp
 npm-debug.log*
 *.log
 .DS_Store
+
+# Local generated artifacts
+tmp/
+output/
+**/__pycache__/
+*.py[cod]

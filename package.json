@@ -7,16 +7,20 @@
     "node": ">=20"
   },
   "scripts": {
-    "dev": "vite --host 0.0.0.0",
+    "dev": "node scripts/dev.js",
+    "dev:client": "vite --host 0.0.0.0",
     "dev:server": "node --watch server/index.js",
     "build": "vite build",
     "start": "node server/index.js",
-    "check": "node --check server/index.js && node --check server/store.js && node --check server/report.js && node --check server/mercadopago.js && node --check server/auth.js && node --check scripts/seed-week-demo.js && node --check scripts/seed-week-postgres.js && node --check src/dates.js",
+    "check": "node --check server/index.js && node --check server/store.js && node --check server/report.js && node --check server/mercadopago.js && node --check server/auth.js && node --check scripts/dev.js && node --check scripts/seed-week-demo.js && node --check scripts/seed-week-postgres.js && node --check src/dates.js",
     "seed:week": "node scripts/seed-week-demo.js",
     "seed:week:postgres": "node scripts/seed-week-postgres.js",
     "test": "node --test --test-concurrency=1 server/*.test.js"
   },
   "dependencies": {
+    "@astryxdesign/core": "0.2.0",
+    "@astryxdesign/theme-neutral": "0.2.0",
+    "@stylexjs/stylex": "0.19.0",
     "compression": "^1.8.1",
     "express": "^5.1.0",
     "lucide-react": "^0.468.0",

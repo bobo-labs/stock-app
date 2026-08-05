@@ -56,6 +56,82 @@ test('cash and card sales update stock exactly once', async () => {
   }
 })
 
+test('partial and full refunds are idempotent, restore selected stock, and track credit notes', async () => {
+  const temporaryDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'bakery-refund-test-'))
+  process.env.DATA_PATH = path.join(temporaryDirectory, 'inventory.json')
+  process.env.SEED_DEMO_DATA = 'false'
+  const store = await import(`./store.js?refund-test=${Date.now()}`)
+
+  try {
+    await store.initializeStore()
+    const product = await store.createItem({
+      name: 'Refund croissant', category: 'Pastries', unit: 'pieces', quantity: 10,
+      lowStockThreshold: 2, sku: 'REFUND-1', expiryDate: null, price: 1500, sellable: true,
+    })
+    const reserved = await store.createSale([{ itemId: product.id, quantity: 4 }], 'card')
+    const paidOrder = {
+      id: `POINT-${reserved.id}`, status: 'processed', status_detail: 'accredited',
+      external_reference: `sale-${reserved.id}`,
+      transactions: { payments: [{ id: `PAY-${reserved.id}`, status: 'processed', status_detail: 'accredited' }] },
+    }
+    await store.attachPointOrder(reserved.id, paidOrder)
+    const paid = await store.updateSaleFromPoint(paidOrder)
+    assert.equal((await store.listItems())[0].quantity, 6)
+
+    const preparedPartial = await store.prepareRefund(paid.id, {
+      items: [{ lineId: paid.items[0].lineId, quantity: 2 }], reason: 'Customer return', restock: true,
+      creditNoteRequired: true, originalDocumentType: '39', originalFolio: '101',
+    })
+    assert.equal(preparedPartial.full, false)
+    assert.equal(preparedPartial.refund.amount, 3000)
+    const partialOrder = {
+      ...paidOrder, status: 'processed', status_detail: 'partially_refunded',
+      transactions: {
+        payments: [{ id: `PAY-${reserved.id}`, status: 'processed', status_detail: 'partially_refunded' }],
+        refunds: [{ id: 'MP-REFUND-1', amount: '3000', status: 'processed' }],
+      },
+    }
+    assert.equal((await store.updateSaleFromPoint(partialOrder)).status, 'paid')
+    const partial = await store.completeRefund(preparedPartial.refund.id, partialOrder)
+    assert.equal(partial.status, 'paid')
+    assert.equal(partial.refundedTotal, 3000)
+    assert.equal(partial.refundableTotal, 3000)
+    assert.equal(partial.refunds[0].creditNote.status, 'pending')
+    assert.equal((await store.listItems())[0].quantity, 8)
+
+    await store.completeRefund(preparedPartial.refund.id, partialOrder)
+    assert.equal((await store.listItems())[0].quantity, 8)
+    const withCreditNote = await store.recordCreditNote(paid.id, preparedPartial.refund.id, {
+      originalDocumentType: '39', originalFolio: '101', folio: '55', siiTrackId: 'TRACK-55',
+    })
+    assert.equal(withCreditNote.refunds[0].creditNote.status, 'issued')
+    assert.equal(withCreditNote.refunds[0].creditNote.folio, '55')
+
+    const preparedFull = await store.prepareRefund(paid.id, {
+      items: [{ lineId: paid.items[0].lineId, quantity: 2 }], reason: '', restock: false,
+      creditNoteRequired: false, originalDocumentType: '', originalFolio: '',
+    })
+    assert.equal(preparedFull.full, true)
+    const full = await store.completeRefund(preparedFull.refund.id, {
+      ...paidOrder, status: 'refunded', status_detail: 'refunded',
+      transactions: { payments: paidOrder.transactions.payments, refunds: [{ id: 'MP-REFUND-2', amount: '3000', status: 'processed' }] },
+    })
+    assert.equal(full.status, 'refunded')
+    assert.equal(full.refundedTotal, 6000)
+    assert.equal((await store.listItems())[0].quantity, 8)
+    await assert.rejects(
+      () => store.prepareRefund(paid.id, {
+        items: [{ lineId: paid.items[0].lineId, quantity: 1 }], reason: '', restock: true,
+        creditNoteRequired: false, originalDocumentType: '', originalFolio: '',
+      }),
+      (error) => error.status === 409,
+    )
+  } finally {
+    await store.closeStore()
+    await fs.rm(temporaryDirectory, { recursive: true, force: true })
+  }
+})
+
 test('Mercado Pago webhook signatures use the documented manifest', async () => {
   process.env.MERCADOPAGO_WEBHOOK_SECRET = 'webhook-test-secret'
   process.env.MERCADOPAGO_MOCK = 'false'

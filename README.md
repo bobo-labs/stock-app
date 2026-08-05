@@ -13,6 +13,9 @@ A responsive, touch-friendly bakery inventory and point-of-sale application. Spa
 - Keep sales, line-item price snapshots, payment state, and inventory changes in PostgreSQL.
 - Restore reserved inventory exactly once when a card order fails, expires, or is cancelled.
 - View recent sales and resume a pending terminal payment.
+- Refund approved cash or Point sales in full or by selected line items.
+- Optionally return refunded items to stock without duplicating inventory movements.
+- Track pending and manually issued credit notes separately from the financial refund.
 - Review revenue, payment mix, hourly demand, best sellers, and daily cash reconciliation.
 - Export a lightweight, self-contained daily HTML report.
 - Switch between a soft pastel light theme and a gray dark theme.
@@ -116,9 +119,16 @@ Point order status mapping:
 | `created`, `at_terminal`, `action_required` | Pending | Remains reserved |
 | `processed` + `accredited` | Paid | Reservation becomes the sale deduction |
 | `failed`, `canceled`, `expired` | Final failure | Restored once |
-| `refunded` | Refunded | Not automatically returned to stock |
+| `processed` + `partially_refunded` | Paid with partial refund | Returned only when selected in the refund |
+| `refunded` | Refunded | Returned only when selected in the refund |
 
-A refund does not prove that physical products were returned, so stock must be adjusted separately after the bakery receives the goods.
+A financial refund does not prove that physical products were returned or that a tax document was corrected. The refund flow therefore keeps stock restoration optional and tracks the SII credit note as a separate manual state until an automatic tax integration exists.
+
+Planning and tax research:
+
+- [Product roadmap](ROADMAP.md)
+- [SII architecture summary](SII_DTE_RESEARCH.md)
+- [Detailed SII integration analysis](integraci%C3%B3n%20SII.md)
 
 ## Commands
 
@@ -134,4 +144,4 @@ npm start
 
 ## Production note
 
-Keep staff authentication enabled on any public Railway deployment. This release provides one shared staff PIN; individual staff accounts, roles, cash drawer reconciliation, tax receipts, and refunds in the interface are sensible next steps before a larger rollout.
+Keep staff authentication enabled on any public Railway deployment. This release provides one shared staff PIN; individual accounts, roles, approval limits, automatic tax issuance, and searchable long-term sales history remain necessary before a larger rollout.

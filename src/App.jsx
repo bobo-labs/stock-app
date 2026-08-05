@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import {
   AlertTriangle, ArrowDown, ArrowRight, ArrowUp, BadgeCheck, Banknote, BarChart3,
   Boxes, Calculator, CalendarClock, Check, ChevronRight, CirclePlus, Clock3, CreditCard, Download,
-  Croissant, History, LayoutDashboard, LineChart, LockKeyhole, LogOut, Menu, Minus, Moon,
+  Croissant, FileCheck2, History, LayoutDashboard, LineChart, LockKeyhole, LogOut, Menu, Minus, Moon,
   PackageOpen, Pencil, Plus, ReceiptText, RotateCw, Search, ShoppingBasket,
-  SlidersHorizontal, Sparkles, Sun, TrendingDown, TrendingUp, Trash2, WalletCards, Wifi, X,
+  SlidersHorizontal, Sparkles, Sun, TrendingDown, TrendingUp, Trash2, Undo2, WalletCards, Wifi, X,
 } from 'lucide-react'
 import { api } from './api.js'
 import { dateOnly, parseCalendarDate } from './dates.js'
@@ -12,6 +13,7 @@ import { useI18n } from './i18n.js'
 
 const categories = ['Bread', 'Pastries', 'Cakes', 'Ingredients', 'Packaging', 'Drinks', 'Other']
 const units = ['pieces', 'loaves', 'cakes', 'kg', 'g', 'litres', 'bottles', 'boxes', 'packs']
+const AstryxDeleteDialog = lazy(() => import('./AstryxDeleteDialog.jsx'))
 
 function formatQuantity(value) {
   return Number(value).toLocaleString(undefined, { maximumFractionDigits: 2 })
@@ -88,13 +90,15 @@ function LoginScreen({ onLogin, theme, onThemeToggle }) {
 function Modal({ title, eyebrow, onClose, children, wide = false, closeable = true }) {
   const { t } = useI18n()
   useEffect(() => {
-    const onKey = (event) => event.key === 'Escape' && closeable && onClose()
+    const onKey = (event) => {
+      if (event.key === 'Escape' && closeable && !document.querySelector('dialog[open]')) onClose()
+    }
     document.addEventListener('keydown', onKey)
     document.body.classList.add('modal-open')
     return () => { document.removeEventListener('keydown', onKey); document.body.classList.remove('modal-open') }
   }, [closeable, onClose])
 
-  return <div className="modal-backdrop" role="presentation" onMouseDown={(event) => closeable && event.target === event.currentTarget && onClose()}>
+  return createPortal(<div className="modal-backdrop" role="presentation" onMouseDown={(event) => closeable && event.target === event.currentTarget && onClose()}>
     <section className={`modal ${wide ? 'modal-wide' : ''}`} role="dialog" aria-modal="true" aria-labelledby="modal-title">
       <div className="modal-handle" />
       <header className="modal-header">
@@ -103,31 +107,45 @@ function Modal({ title, eyebrow, onClose, children, wide = false, closeable = tr
       </header>
       {children}
     </section>
-  </div>
+  </div>, document.body)
 }
 
-function ProductForm({ item, onSubmit, onDelete, onClose, busy }) {
-  const { t, categoryLabel, unitLabel } = useI18n()
+function ProductForm({ item, onSubmit, onDelete, onClose, busy, theme }) {
+  const { t, categoryLabel, unitLabel, language } = useI18n()
   const [confirmingDelete, setConfirmingDelete] = useState(false)
+  const [deleteDialogLoaded, setDeleteDialogLoaded] = useState(false)
+  const deleteButtonRef = useRef(null)
   const [form, setForm] = useState({
     name: item?.name || '', category: item?.category || 'Bread', unit: item?.unit || 'pieces',
     quantity: item?.quantity ?? '', lowStockThreshold: item?.lowStockThreshold ?? '',
     sku: item?.sku || '', expiryDate: dateOnly(item?.expiryDate) || '',
-    price: item?.price || '', sellable: item?.sellable ?? true,
+    price: item?.price ?? '', sellable: item?.sellable ?? true,
   })
   const update = (key) => (event) => setForm((current) => ({ ...current, [key]: event.target.value }))
-  if (confirmingDelete) return <div className="delete-confirmation">
-    <div className="delete-confirmation-icon"><Trash2 size={26} /></div>
-    <h3>{t('deleteProductQuestion')}</h3>
-    <p>{t('deleteProductDescription', { name: item.name })}</p>
-    {item.quantity > 0 && <div className="delete-stock-warning"><AlertTriangle size={18} /><span>{t('deleteProductStockWarning', { count: formatQuantity(item.quantity), unit: unitLabel(item.unit) })}</span></div>}
-    <div className="modal-actions"><button type="button" className="button secondary" onClick={() => setConfirmingDelete(false)} disabled={busy}>{t('keepProduct')}</button><button type="button" className="button danger-button" onClick={onDelete} disabled={busy}>{busy ? t('deleting') : t('deletePermanently')}<Trash2 size={18} /></button></div>
-  </div>
-  return <form onSubmit={(event) => { event.preventDefault(); onSubmit(form) }} className="form-stack">
+  const submitProduct = (event) => {
+    event.preventDefault()
+    onSubmit({
+      ...form,
+      name: form.name.trim(),
+      quantity: Number(form.quantity || 0),
+      lowStockThreshold: Number(form.lowStockThreshold || 0),
+      sku: form.sku.trim(),
+      price: form.sellable ? Number(form.price) : 0,
+      sellable: Boolean(form.sellable),
+    })
+  }
+  const deleteDescription = item
+    ? [
+        t('deleteProductDescription', { name: item.name }),
+        item.quantity > 0 ? t('deleteProductStockWarning', { count: formatQuantity(item.quantity), unit: unitLabel(item.unit) }) : '',
+      ].filter(Boolean).join(' ')
+    : ''
+  return <>
+    <form onSubmit={submitProduct} className="form-stack">
     <div className="field full"><label htmlFor="name">{t('productName')}</label><input id="name" autoFocus required value={form.name} onChange={update('name')} placeholder={t('productNamePlaceholder')} /></div>
-    <div className="sellable-panel">
-      <label className="switch-field"><input type="checkbox" checked={form.sellable} onChange={(event) => setForm((current) => ({ ...current, sellable: event.target.checked }))} /><i /><span><strong>{t('sellAtCounter')}</strong><small>{t('sellAtCounterDescription')}</small></span></label>
-      <div className="field price-field"><label htmlFor="price">{t('salePrice')}</label><div className="money-input"><span>$</span><input id="price" type="number" min={form.sellable ? '1' : '0'} step="1" required={form.sellable} disabled={!form.sellable} value={form.price} onChange={update('price')} placeholder="0" /></div></div>
+    <div className={`sellable-panel ${form.sellable ? 'is-enabled' : 'is-disabled'}`}>
+      <label className="switch-field"><input type="checkbox" checked={form.sellable} onChange={(event) => setForm((current) => ({ ...current, sellable: event.target.checked }))} /><i aria-hidden="true" /><span><strong>{t('sellAtCounter')}</strong><small>{t('sellAtCounterDescription')}</small></span></label>
+      <div className="field price-field"><label htmlFor="price">{t('salePrice')}</label><div className="money-input"><span aria-hidden="true">$</span><input id="price" type="number" inputMode="numeric" min={form.sellable ? '1' : '0'} step="1" required={form.sellable} disabled={!form.sellable} value={form.price} onChange={update('price')} placeholder="0" /></div></div>
     </div>
     <div className="form-grid">
       <div className="field"><label htmlFor="category">{t('category')}</label><select id="category" value={form.category} onChange={update('category')}>{categories.map((category) => <option key={category} value={category}>{categoryLabel(category)}</option>)}</select></div>
@@ -137,9 +155,29 @@ function ProductForm({ item, onSubmit, onDelete, onClose, busy }) {
       <div className="field"><label htmlFor="expiry">{t('expiryDate')} <span>{t('optional')}</span></label><input id="expiry" type="date" value={form.expiryDate} onChange={update('expiryDate')} /></div>
       <div className="field"><label htmlFor="sku">{t('sku')} <span>{t('optional')}</span></label><input id="sku" value={form.sku} onChange={update('sku')} placeholder={t('skuPlaceholder')} /></div>
     </div>
-    {item && <button type="button" className="delete-product-link" onClick={() => setConfirmingDelete(true)}><Trash2 size={16} />{t('deleteProduct')}</button>}
-    <div className="modal-actions"><button type="button" className="button secondary" onClick={onClose}>{t('cancel')}</button><button className="button primary" disabled={busy}>{busy ? t('saving') : item ? t('saveChanges') : t('addProduct')}<Check size={18} /></button></div>
-  </form>
+    {item && <button ref={deleteButtonRef} type="button" className="delete-product-link" onClick={() => { setDeleteDialogLoaded(true); setConfirmingDelete(true) }}><Trash2 size={16} />{t('deleteProduct')}</button>}
+      <div className="modal-actions"><button type="button" className="button secondary" onClick={onClose}>{t('cancel')}</button><button className="button primary" disabled={busy}>{busy ? t('saving') : item ? t('saveChanges') : t('addProduct')}<Check size={18} /></button></div>
+    </form>
+    {item && deleteDialogLoaded && <Suspense fallback={null}><AstryxDeleteDialog
+        language={language}
+        mode={theme}
+        className="bakery-alert-dialog"
+        isOpen={confirmingDelete}
+        onOpenChange={(isOpen) => {
+          if (busy) return
+          setConfirmingDelete(isOpen)
+          if (!isOpen) window.requestAnimationFrame(() => window.requestAnimationFrame(() => deleteButtonRef.current?.focus()))
+        }}
+        title={t('deleteProductQuestion')}
+        description={deleteDescription}
+        cancelLabel={t('keepProduct')}
+        actionLabel={busy ? t('deleting') : t('deletePermanently')}
+        actionVariant="destructive"
+        isActionLoading={busy}
+        onAction={onDelete}
+        width="min(480px, calc(100vw - 32px))"
+      /></Suspense>}
+  </>
 }
 
 function AdjustForm({ item, initialType = 'stock_in', onSubmit, onClose, busy }) {
@@ -248,16 +286,19 @@ function Inventory({ items, onAdd, onAdjust, onEdit }) {
   </div>
 }
 
-function SaleList({ sales, onResume, compact = false }) {
+function SaleList({ sales, onResume, onSelect, compact = false }) {
   const { t, formatCurrency, formatTime } = useI18n()
   if (!sales.length) return <div className="sales-empty"><ReceiptText size={25} /><span>{t('noSalesYet')}</span></div>
   return <div className={`sales-list ${compact ? 'compact' : ''}`}>{sales.map((sale) => {
-    const state = saleState(sale.status, t)
-    return <button key={sale.id} disabled={sale.status !== 'pending'} onClick={() => sale.status === 'pending' && onResume(sale)}>
+    const state = sale.status === 'paid' && sale.refundedTotal > 0
+      ? { label: t('salePartiallyRefunded'), tone: 'warning' }
+      : saleState(sale.status, t)
+    const interactive = sale.status === 'pending' || sale.status === 'paid' || sale.status === 'refunded'
+    return <button key={sale.id} disabled={!interactive} aria-label={`${t('openSaleDetails')} #${sale.shortId}`} onClick={() => sale.status === 'pending' ? onResume(sale) : onSelect?.(sale)}>
       <div className={`sale-icon ${sale.paymentMethod}`} >{sale.paymentMethod === 'card' ? <CreditCard size={17} /> : <Banknote size={17} />}</div>
       <div className="sale-copy"><strong>#{sale.shortId}</strong><span>{sale.items.length} {sale.items.length === 1 ? t('item') : t('items')} · {formatTime(sale.createdAt)}</span></div>
       <div className="sale-value"><strong>{formatCurrency(sale.total)}</strong><span className={`sale-status ${state.tone}`}>{state.label}</span></div>
-      {sale.status === 'pending' && <ChevronRight size={17} />}
+      {interactive && <ChevronRight size={17} />}
     </button>
   })}</div>
 }
@@ -301,12 +342,117 @@ function CheckoutModal({ checkout, posConfig, onCash, onCard, onRetry, onCancelS
   </Modal>
 }
 
+function SaleDetailsModal({ sale, onClose, onRefund, onRetryRefund, onCreditNote, busy }) {
+  const { t, formatCurrency, formatTime, unitLabel } = useI18n()
+  const [view, setView] = useState('details')
+  const [quantities, setQuantities] = useState({})
+  const [refundForm, setRefundForm] = useState({
+    reason: '', restock: true, creditNoteRequired: false, originalDocumentType: '39', originalFolio: '',
+  })
+  const [creditNoteRefund, setCreditNoteRefund] = useState(null)
+  const [creditNoteForm, setCreditNoteForm] = useState({ originalDocumentType: '39', originalFolio: '', folio: '', siiTrackId: '' })
+  const processedRefunds = sale.refunds?.filter((refund) => refund.status === 'processed') || []
+  const refundedByLine = new Map()
+  for (const refund of processedRefunds) {
+    for (const line of refund.items) refundedByLine.set(line.lineId, (refundedByLine.get(line.lineId) || 0) + line.quantity)
+  }
+  const refundableLines = sale.items.map((line) => ({
+    ...line,
+    refundableQuantity: Math.max(0, line.quantity - Number(refundedByLine.get(line.lineId) || 0)),
+  })).filter((line) => line.refundableQuantity > 0)
+  const refundAmount = refundableLines.reduce((sum, line) => sum + Math.round(line.unitPrice * Number(quantities[line.lineId] || 0)), 0)
+  const selectedItems = refundableLines
+    .map((line) => ({ lineId: line.lineId, quantity: Number(quantities[line.lineId] || 0) }))
+    .filter((line) => line.quantity > 0)
+  const state = sale.status === 'paid' && sale.refundedTotal > 0
+    ? { label: t('salePartiallyRefunded'), tone: 'warning' }
+    : saleState(sale.status, t)
+
+  const openRefund = () => {
+    setQuantities({})
+    setRefundForm({ reason: '', restock: true, creditNoteRequired: false, originalDocumentType: '39', originalFolio: '' })
+    setView('refund')
+  }
+  const submitRefund = async (event) => {
+    event.preventDefault()
+    if (!selectedItems.length) return
+    try {
+      const next = await onRefund({ ...refundForm, items: selectedItems })
+      if (next) setView('details')
+    } catch {}
+  }
+  const openCreditNote = (refund) => {
+    setCreditNoteRefund(refund)
+    setCreditNoteForm({
+      originalDocumentType: refund.creditNote?.originalDocumentType || refund.originalDocumentType || '39',
+      originalFolio: refund.creditNote?.originalFolio || refund.originalFolio || '',
+      folio: refund.creditNote?.folio || '',
+      siiTrackId: refund.creditNote?.siiTrackId || '',
+    })
+    setView('credit-note')
+  }
+  const submitCreditNote = async (event) => {
+    event.preventDefault()
+    try {
+      const next = await onCreditNote(creditNoteRefund.id, creditNoteForm)
+      if (next) setView('details')
+    } catch {}
+  }
+
+  return <Modal title={`#${sale.shortId}`} eyebrow={view === 'credit-note' ? t('recordCreditNote') : t('saleDetails')} onClose={onClose} closeable={!busy}>
+    {view === 'details' && <div className="sale-details-body">
+      <div className="sale-detail-summary">
+        <div><span>{t('total')}</span><strong>{formatCurrency(sale.total)}</strong></div>
+        <div><span>{t('alreadyRefunded')}</span><strong>{formatCurrency(sale.refundedTotal || 0)}</strong></div>
+        <div><span>{t('refundableAmount')}</span><strong>{formatCurrency(sale.refundableTotal || 0)}</strong></div>
+      </div>
+      <div className="sale-detail-meta"><span className={`sale-status ${state.tone}`}>{state.label}</span><span>{sale.paymentMethod === 'card' ? t('card') : t('cash')} · {formatTime(sale.createdAt)}</span></div>
+      <div className="sale-detail-lines">
+        {sale.items.map((line) => <div key={line.lineId}><div><strong>{line.name}</strong><span>{formatQuantity(line.quantity)} {unitLabel(line.unit)} · {formatCurrency(line.unitPrice)}</span></div><b>{formatCurrency(line.lineTotal)}</b></div>)}
+      </div>
+      {sale.refunds?.length > 0 && <section className="refund-history"><div className="section-label"><span>{t('refundHistory')}</span></div>{sale.refunds.map((refund) => <article key={refund.id}>
+        <div className={`refund-icon ${refund.status}`}><Undo2 size={17} /></div>
+        <div><strong>{formatCurrency(refund.amount)}</strong><span>{refund.status === 'processed' ? t('refundCompleted') : refund.status === 'pending' ? t('refundPending') : t('refundFailed')}</span>{refund.reason && <small>{refund.reason}</small>}</div>
+        <div className="refund-actions">
+          {refund.status === 'pending' && sale.paymentMethod === 'card' && <button className="button compact" onClick={() => onRetryRefund(refund.id).catch(() => {})} disabled={busy}><RotateCw size={15} />{t('retryRefund')}</button>}
+          {refund.creditNote?.status === 'pending' && <button className="button compact" onClick={() => openCreditNote(refund)}><FileCheck2 size={15} />{t('recordCreditNote')}</button>}
+          {refund.creditNote?.status === 'issued' && <span className="credit-note-state issued"><FileCheck2 size={15} />{t('creditNoteIssued')} · N° {refund.creditNote.folio}</span>}
+        </div>
+      </article>)}</section>}
+      <div className="modal-actions"><button type="button" className="button secondary" onClick={onClose}>{t('close')}</button><button type="button" className="button primary" onClick={openRefund} disabled={busy || sale.status !== 'paid' || sale.refundableTotal <= 0}><Undo2 size={18} />{sale.refundableTotal > 0 ? t('refundSale') : t('noRefundableProducts')}</button></div>
+    </div>}
+
+    {view === 'refund' && <form className="refund-form" onSubmit={submitRefund}>
+      <p className="modal-description">{t('refundDescription')}</p>
+      <div className="section-label"><span>{t('selectProductsToRefund')}</span></div>
+      <div className="refund-lines">{refundableLines.map((line) => <label key={line.lineId}>
+        <span><strong>{line.name}</strong><small>{formatQuantity(line.refundableQuantity)} {unitLabel(line.unit)} · {formatCurrency(line.unitPrice)}</small></span>
+        <input type="number" min="0" max={line.refundableQuantity} step="0.01" inputMode="decimal" aria-label={`${t('refundQuantity')}: ${line.name}`} value={quantities[line.lineId] ?? ''} onChange={(event) => setQuantities((current) => ({ ...current, [line.lineId]: event.target.value }))} placeholder="0" />
+      </label>)}</div>
+      <div className="refund-total"><span>{refundAmount >= sale.refundableTotal ? t('fullRefund') : t('partialRefund')}</span><strong>{formatCurrency(refundAmount)}</strong></div>
+      <label className="switch-field refund-switch"><input type="checkbox" checked={refundForm.restock} onChange={(event) => setRefundForm((current) => ({ ...current, restock: event.target.checked }))} /><i aria-hidden="true" /><span><strong>{t('returnToInventory')}</strong><small>{t('returnToInventoryDescription')}</small></span></label>
+      <div className="field full"><label htmlFor="refund-reason">{t('refundReason')} <span>{t('optional')}</span></label><input id="refund-reason" value={refundForm.reason} onChange={(event) => setRefundForm((current) => ({ ...current, reason: event.target.value }))} placeholder={t('refundReasonPlaceholder')} /></div>
+      <label className="switch-field refund-switch"><input type="checkbox" checked={refundForm.creditNoteRequired} onChange={(event) => setRefundForm((current) => ({ ...current, creditNoteRequired: event.target.checked }))} /><i aria-hidden="true" /><span><strong>{t('electronicReceiptIssued')}</strong><small>{t('electronicReceiptDescription')}</small></span></label>
+      {refundForm.creditNoteRequired && <div className="form-grid credit-note-reference"><div className="field"><label htmlFor="original-document-type">{t('originalDocumentType')}</label><select id="original-document-type" value={refundForm.originalDocumentType} onChange={(event) => setRefundForm((current) => ({ ...current, originalDocumentType: event.target.value }))}><option value="39">{t('documentType39')}</option><option value="41">{t('documentType41')}</option><option value="33">{t('documentType33')}</option><option value="34">{t('documentType34')}</option></select></div><div className="field"><label htmlFor="original-folio">{t('originalFolio')} <span>{t('optional')}</span></label><input id="original-folio" inputMode="numeric" value={refundForm.originalFolio} onChange={(event) => setRefundForm((current) => ({ ...current, originalFolio: event.target.value }))} /></div></div>}
+      <div className="refund-payment-hint"><AlertTriangle size={16} /><span>{sale.paymentMethod === 'card' ? t('pointRefundHint') : t('cashRefundHint')}</span></div>
+      <div className="modal-actions"><button type="button" className="button secondary" onClick={() => setView('details')} disabled={busy}>{t('cancel')}</button><button className="button primary" disabled={busy || !selectedItems.length || refundAmount <= 0}>{busy ? t('processingRefund') : t('confirmRefund')}<Undo2 size={18} /></button></div>
+    </form>}
+
+    {view === 'credit-note' && <form className="form-stack credit-note-form" onSubmit={submitCreditNote}>
+      <p className="modal-description">{t('creditNoteDescription')}</p>
+      <div className="form-grid"><div className="field"><label htmlFor="credit-original-type">{t('originalDocumentType')}</label><select id="credit-original-type" value={creditNoteForm.originalDocumentType} onChange={(event) => setCreditNoteForm((current) => ({ ...current, originalDocumentType: event.target.value }))}><option value="39">{t('documentType39')}</option><option value="41">{t('documentType41')}</option><option value="33">{t('documentType33')}</option><option value="34">{t('documentType34')}</option></select></div><div className="field"><label htmlFor="credit-original-folio">{t('originalFolio')}</label><input id="credit-original-folio" required inputMode="numeric" pattern="[0-9]+" value={creditNoteForm.originalFolio} onChange={(event) => setCreditNoteForm((current) => ({ ...current, originalFolio: event.target.value }))} /></div><div className="field"><label htmlFor="credit-note-folio">{t('creditNoteFolio')}</label><input id="credit-note-folio" required inputMode="numeric" pattern="[0-9]+" value={creditNoteForm.folio} onChange={(event) => setCreditNoteForm((current) => ({ ...current, folio: event.target.value }))} /></div><div className="field"><label htmlFor="credit-track-id">{t('siiTrackId')} <span>{t('optional')}</span></label><input id="credit-track-id" value={creditNoteForm.siiTrackId} onChange={(event) => setCreditNoteForm((current) => ({ ...current, siiTrackId: event.target.value }))} /></div></div>
+      <div className="modal-actions"><button type="button" className="button secondary" onClick={() => setView('details')} disabled={busy}>{t('cancel')}</button><button className="button primary" disabled={busy}>{busy ? t('saving') : t('saveCreditNote')}<FileCheck2 size={18} /></button></div>
+    </form>}
+  </Modal>
+}
+
 function SalesCounter({ items, sales, posConfig, onRefresh, setToast }) {
   const { t, categoryLabel, unitLabel, formatCurrency } = useI18n()
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState('All')
   const [cart, setCart] = useState([])
   const [checkout, setCheckout] = useState(null)
+  const [selectedSale, setSelectedSale] = useState(null)
   const [busy, setBusy] = useState(false)
   const sellable = useMemo(() => items.filter((item) => item.sellable && item.price > 0), [items])
   const presentCategories = categories.filter((category) => sellable.some((item) => item.category === category))
@@ -364,6 +510,44 @@ function SalesCounter({ items, sales, posConfig, onRefresh, setToast }) {
       setToast({ type: terminal.connected ? 'success' : 'error', message: terminal.connected ? t('pointReady', { id: terminal.label || '' }) : t('pointNeedsPdv') })
     } catch (error) { setToast({ type: 'error', message: error.message }) }
   }
+  const refundSale = async (input) => {
+    if (!selectedSale) return null
+    setBusy(true)
+    try {
+      const next = await api.refundSale(selectedSale.id, input)
+      setSelectedSale(next)
+      await onRefresh()
+      setToast({ type: 'success', message: t('refundCompleted') })
+      return next
+    } catch (error) {
+      if (error.refundId) {
+        const refreshed = await api.sale(selectedSale.id).catch(() => null)
+        if (refreshed) setSelectedSale(refreshed)
+      }
+      setToast({ type: 'error', message: error.message })
+      throw error
+    } finally { setBusy(false) }
+  }
+  const retryRefund = async (refundId) => {
+    if (!selectedSale) return null
+    setBusy(true)
+    try {
+      const next = await api.retryRefund(selectedSale.id, refundId)
+      setSelectedSale(next); await onRefresh(); setToast({ type: 'success', message: t('refundCompleted') })
+      return next
+    } catch (error) { setToast({ type: 'error', message: error.message }); throw error }
+    finally { setBusy(false) }
+  }
+  const recordCreditNote = async (refundId, input) => {
+    if (!selectedSale) return null
+    setBusy(true)
+    try {
+      const next = await api.recordCreditNote(selectedSale.id, refundId, input)
+      setSelectedSale(next); await onRefresh(); setToast({ type: 'success', message: t('creditNoteRecorded') })
+      return next
+    } catch (error) { setToast({ type: 'error', message: error.message }); throw error }
+    finally { setBusy(false) }
+  }
 
   useEffect(() => {
     if (checkout?.stage !== 'processing' || !checkout.sale?.id) return undefined
@@ -382,6 +566,9 @@ function SalesCounter({ items, sales, posConfig, onRefresh, setToast }) {
     poll()
     return () => { active = false; clearInterval(id) }
   }, [checkout?.stage, checkout?.sale?.id])
+  useEffect(() => {
+    setSelectedSale((current) => current ? sales.find((sale) => sale.id === current.id) || current : null)
+  }, [sales])
 
   return <div className="page pos-page enter">
     <section className="page-heading pos-heading"><div><span className="eyebrow">{t('counterMode')}</span><h1>{t('salesCounter')}</h1><p>{t('salesDescription')}</p></div><button className={`terminal-chip ${posConfig.configured ? 'ready' : ''}`} onClick={checkPoint} disabled={!posConfig.configured}><Wifi size={16} /><span>{posConfig.mockMode ? t('pointDemoMode') : posConfig.configured ? `Point · ${posConfig.terminalLabel}` : t('pointOffline')}</span></button></section>
@@ -396,7 +583,7 @@ function SalesCounter({ items, sales, posConfig, onRefresh, setToast }) {
             {item.quantity <= 0 ? <i>{t('outOfStock')}</i> : <Plus size={17} />}
           </button>
         })}</div> : <div className="pos-empty compact"><Search size={27} /><h3>{t('noProductsFound')}</h3></div>}
-        <section className="card recent-sales"><header className="card-header"><div><span className="eyebrow">{t('todayAndRecent')}</span><h2>{t('recentSales')}</h2></div></header><SaleList sales={sales.slice(0, 6)} onResume={(sale) => setCheckout({ stage: sale.mpOrderId ? 'processing' : 'connection-error', sale, total: sale.total, error: sale.mpOrderId ? '' : t('reservedSaleRecovery') })} compact /></section>
+        <section className="card recent-sales"><header className="card-header"><div><span className="eyebrow">{t('todayAndRecent')}</span><h2>{t('recentSales')}</h2></div></header><SaleList sales={sales.slice(0, 12)} onResume={(sale) => setCheckout({ stage: sale.mpOrderId ? 'processing' : 'connection-error', sale, total: sale.total, error: sale.mpOrderId ? '' : t('reservedSaleRecovery') })} onSelect={setSelectedSale} compact /></section>
       </div>
       <aside className={`cart-panel ${cartLines.length ? 'has-items' : ''}`}>
         <header><div><ShoppingBasket size={20} /><div><span className="eyebrow">{t('currentOrder')}</span><h2>{t('cart')}</h2></div></div>{cartLines.length > 0 && <button onClick={() => setCart([])}>{t('clear')}</button>}</header>
@@ -405,6 +592,7 @@ function SalesCounter({ items, sales, posConfig, onRefresh, setToast }) {
       </aside>
     </section>
     {checkout && <CheckoutModal checkout={checkout} posConfig={posConfig} onCash={payCash} onCard={payCard} onRetry={retry} onCancelSale={cancelSale} onClose={() => setCheckout(null)} busy={busy} />}
+    {selectedSale && <SaleDetailsModal sale={selectedSale} onClose={() => setSelectedSale(null)} onRefund={refundSale} onRetryRefund={retryRefund} onCreditNote={recordCreditNote} busy={busy} />}
   </div>
 }
 
@@ -650,8 +838,8 @@ export default function App() {
       </>}
     </main>
     <nav className="bottom-nav">{nav.map(({ id, label, icon: Icon }) => <button key={id} className={page === id ? 'active' : ''} onClick={() => setPage(id)}><Icon size={20} /><span>{label}</span></button>)}</nav>
-    {modal?.type === 'add' && <Modal title={t('addProduct')} eyebrow={t('inventorySetup')} onClose={() => setModal(null)}><ProductForm onSubmit={addItem} onClose={() => setModal(null)} busy={busy} /></Modal>}
-    {modal?.type === 'edit' && <Modal title={modal.item.name} eyebrow={t('productDetails')} onClose={() => setModal(null)}><ProductForm item={modal.item} onSubmit={(form) => editItem(modal.item, form)} onDelete={() => deleteItem(modal.item)} onClose={() => setModal(null)} busy={busy} /></Modal>}
+    {modal?.type === 'add' && <Modal title={t('addProduct')} eyebrow={t('inventorySetup')} onClose={() => setModal(null)}><ProductForm onSubmit={addItem} onClose={() => setModal(null)} busy={busy} theme={theme} /></Modal>}
+    {modal?.type === 'edit' && <Modal title={modal.item.name} eyebrow={t('productDetails')} onClose={() => setModal(null)}><ProductForm item={modal.item} onSubmit={(form) => editItem(modal.item, form)} onDelete={() => deleteItem(modal.item)} onClose={() => setModal(null)} busy={busy} theme={theme} /></Modal>}
     {modal?.type === 'adjust' && <Modal title={modal.item.name} eyebrow={t('updateStock')} onClose={() => setModal(null)}><AdjustForm item={modal.item} onSubmit={(form) => adjustItem(modal.item, form)} onClose={() => setModal(null)} busy={busy} /></Modal>}
     {modal?.type === 'cash-close' && metricsData && <Modal title={t('dayClose')} eyebrow={t('closeSummary')} onClose={() => setModal(null)}><CashCloseForm metrics={metricsData} onSubmit={saveCashClose} onClose={() => setModal(null)} busy={busy} /></Modal>}
     {toast && <div className={`toast ${toast.type}`} role="status"><div>{toast.type === 'success' ? <Check size={18} /> : <AlertTriangle size={18} />}</div><span>{toast.message}</span><button onClick={() => setToast(null)} aria-label={t('close')}><X size={16} /></button></div>}
