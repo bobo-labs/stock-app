@@ -2,10 +2,10 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } fro
 import { createPortal } from 'react-dom'
 import {
   AlertTriangle, ArrowDown, ArrowRight, ArrowUp, BadgeCheck, Banknote, BarChart3,
-  Boxes, Calculator, CalendarClock, Check, ChevronRight, CirclePlus, Clock3, CreditCard, Download,
-  Croissant, FileCheck2, History, LayoutDashboard, LineChart, LockKeyhole, LogOut, Menu, Minus, Moon,
+  Boxes, CakeSlice, Calculator, CalendarClock, Check, ChevronRight, CirclePlus, Clock3, Coffee, CreditCard, Download,
+  Croissant, FileCheck2, History, LayoutDashboard, LineChart, LockKeyhole, LogOut, Menu, Minus, Moon, PanelLeftClose,
   PackageOpen, Pencil, Plus, ReceiptText, RotateCw, Search, ShoppingBasket,
-  SlidersHorizontal, Sparkles, Sun, TrendingDown, TrendingUp, Trash2, Undo2, WalletCards, Wifi, X,
+  SlidersHorizontal, Sparkles, Sun, TrendingDown, TrendingUp, Trash2, Undo2, WalletCards, Wheat, Wifi, X,
 } from 'lucide-react'
 import { api } from './api.js'
 import { dateOnly, parseCalendarDate } from './dates.js'
@@ -13,7 +13,17 @@ import { useI18n } from './i18n.js'
 
 const categories = ['Bread', 'Pastries', 'Cakes', 'Ingredients', 'Packaging', 'Drinks', 'Other']
 const units = ['pieces', 'loaves', 'cakes', 'kg', 'g', 'litres', 'bottles', 'boxes', 'packs']
+const categoryIcons = { Bread: Wheat, Pastries: Croissant, Cakes: CakeSlice, Ingredients: Wheat, Packaging: PackageOpen, Drinks: Coffee, Other: Sparkles }
 const AstryxDeleteDialog = lazy(() => import('./AstryxDeleteDialog.jsx'))
+
+function categoryClass(category = '') {
+  return category.toLowerCase().replace(/[^a-z0-9]+/g, '-')
+}
+
+function CategoryIcon({ category, size = 20, className = '' }) {
+  const Icon = categoryIcons[category] || Sparkles
+  return <Icon className={className} size={size} aria-hidden="true" />
+}
 
 function formatQuantity(value) {
   return Number(value).toLocaleString(undefined, { maximumFractionDigits: 2 })
@@ -504,12 +514,6 @@ function SalesCounter({ items, sales, posConfig, onRefresh, setToast }) {
     catch (error) { setToast({ type: 'error', message: error.message }) }
     finally { setBusy(false) }
   }
-  const checkPoint = async () => {
-    try {
-      const terminal = await api.terminal()
-      setToast({ type: terminal.connected ? 'success' : 'error', message: terminal.connected ? t('pointReady', { id: terminal.label || '' }) : t('pointNeedsPdv') })
-    } catch (error) { setToast({ type: 'error', message: error.message }) }
-  }
   const refundSale = async (input) => {
     if (!selectedSale) return null
     setBusy(true)
@@ -571,16 +575,18 @@ function SalesCounter({ items, sales, posConfig, onRefresh, setToast }) {
   }, [sales])
 
   return <div className="page pos-page enter">
-    <section className="page-heading pos-heading"><div><span className="eyebrow">{t('counterMode')}</span><h1>{t('salesCounter')}</h1><p>{t('salesDescription')}</p></div><button className={`terminal-chip ${posConfig.configured ? 'ready' : ''}`} onClick={checkPoint} disabled={!posConfig.configured}><Wifi size={16} /><span>{posConfig.mockMode ? t('pointDemoMode') : posConfig.configured ? `Point · ${posConfig.terminalLabel}` : t('pointOffline')}</span></button></section>
+    <section className="page-heading pos-heading"><div><span className="eyebrow">{t('counterMode')}</span><h1>{t('salesCounter')}</h1><p>{t('salesDescription')}</p></div></section>
     <section className="pos-layout">
       <div className="catalog-panel">
         <div className="toolbar pos-toolbar"><label className="search-box"><Search size={19} /><input aria-label={t('searchProducts')} value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t('searchProducts')} />{search && <button onClick={() => setSearch('')} aria-label={t('close')}><X size={16} /></button>}</label><div className="filter-scroll"><button className={filter === 'All' ? 'active' : ''} onClick={() => setFilter('All')}>{t('all')}</button>{presentCategories.map((category) => <button key={category} className={filter === category ? 'active' : ''} onClick={() => setFilter(category)}>{categoryLabel(category)}</button>)}</div></div>
         {sellable.length === 0 ? <div className="card pos-empty"><div className="empty-art"><ReceiptText size={31} /></div><h3>{t('configureProductsForSale')}</h3><p>{t('configureProductsDescription')}</p></div> : products.length ? <div className="product-grid">{products.map((item) => {
           const inCart = cart.find((line) => line.itemId === item.id)?.quantity || 0
-          return <button key={item.id} className="sale-product" disabled={item.quantity <= 0 || inCart >= item.quantity} onClick={() => changeQuantity(item, 1)}>
-            <div className="sale-product-top"><div className="product-glyph"><Croissant size={20} /></div>{inCart > 0 && <span className="cart-badge">{formatQuantity(inCart)}</span>}</div>
-            <strong>{item.name}</strong><span>{formatQuantity(item.quantity)} {unitLabel(item.unit)} {t('availableLower')}</span><b>{formatCurrency(item.price)}</b>
-            {item.quantity <= 0 ? <i>{t('outOfStock')}</i> : <Plus size={17} />}
+          return <button key={item.id} className={`sale-product category-${categoryClass(item.category)} ${item.quantity <= 0 ? 'is-unavailable' : ''}`} disabled={item.quantity <= 0 || inCart >= item.quantity} onClick={() => changeQuantity(item, 1)}>
+            <CategoryIcon category={item.category} size={82} className="sale-product-art" />
+            {inCart > 0 && <span className="cart-badge">{formatQuantity(inCart)}</span>}
+            <strong className="sale-product-name">{item.name}</strong>
+            <div className="sale-product-footer"><span className="sale-product-price">{formatCurrency(item.price)}</span><span className="sale-product-stock"><b>{formatQuantity(item.quantity)}</b><small>{unitLabel(item.unit)}</small></span></div>
+            {item.quantity <= 0 ? <i>{t('outOfStock')}</i> : <Plus className="sale-product-add" size={16} />}
           </button>
         })}</div> : <div className="pos-empty compact"><Search size={27} /><h3>{t('noProductsFound')}</h3></div>}
         <section className="card recent-sales"><header className="card-header"><div><span className="eyebrow">{t('todayAndRecent')}</span><h2>{t('recentSales')}</h2></div></header><SaleList sales={sales.slice(0, 12)} onResume={(sale) => setCheckout({ stage: sale.mpOrderId ? 'processing' : 'connection-error', sale, total: sale.total, error: sale.mpOrderId ? '' : t('reservedSaleRecovery') })} onSelect={setSelectedSale} compact /></section>
@@ -743,12 +749,17 @@ export default function App() {
   const [busy, setBusy] = useState(false)
   const [toast, setToast] = useState(null)
   const [mobileMenu, setMobileMenu] = useState(false)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => window.localStorage.getItem('bakery-sidebar') !== 'expanded')
   const [theme, setTheme] = useState(() => window.localStorage.getItem('bakery-theme') === 'dark' ? 'dark' : 'light')
+  const brandLogoRef = useRef(null)
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme
     window.localStorage.setItem('bakery-theme', theme)
   }, [theme])
+  useEffect(() => {
+    window.localStorage.setItem('bakery-sidebar', sidebarCollapsed ? 'collapsed' : 'expanded')
+  }, [sidebarCollapsed])
 
   const refresh = useCallback(async () => {
     const [nextItems, nextMovements, nextSales, nextPosConfig] = await Promise.all([api.items(), api.movements(), api.sales(), api.posConfig()])
@@ -775,6 +786,14 @@ export default function App() {
     try { await refresh() } finally { setLoading(false) }
   }
   const handleLogout = async () => { await api.logout(); setAuth({ ...auth, authenticated: false }); setItems([]); setSales([]); setMovements([]); setMetricsData(null) }
+  const toggleSidebar = () => {
+    if (window.matchMedia('(max-width: 780px)').matches) setMobileMenu(false)
+    else {
+      const willCollapse = !sidebarCollapsed
+      setSidebarCollapsed(willCollapse)
+      if (willCollapse) window.requestAnimationFrame(() => brandLogoRef.current?.focus({ preventScroll: true }))
+    }
+  }
   const perform = async (action, message) => {
     setBusy(true)
     try { await action(); await refresh(); setModal(null); setToast({ type: 'success', message }) }
@@ -782,6 +801,12 @@ export default function App() {
       if (error.status === 401) setAuth((current) => ({ ...current, authenticated: false }))
       setToast({ type: 'error', message: error.message })
     } finally { setBusy(false) }
+  }
+  const checkPoint = async () => {
+    try {
+      const terminal = await api.terminal()
+      setToast({ type: terminal.connected ? 'success' : 'error', message: terminal.connected ? t('pointReady', { id: terminal.label || '' }) : t('pointNeedsPdv') })
+    } catch (error) { setToast({ type: 'error', message: error.message }) }
   }
   const addItem = (form) => perform(() => api.createItem(form), t('productAdded', { name: form.name }))
   const editItem = (item, form) => perform(() => api.updateItem(item.id, form), t('productUpdated', { name: form.name }))
@@ -819,16 +844,15 @@ export default function App() {
   if (loading && !auth) return <div className="loading full"><div className="loader-mark"><Croissant size={28} /></div><span>{t('preparing')}</span></div>
   if (auth?.required && !auth.authenticated) return <LoginScreen onLogin={handleLogin} theme={theme} onThemeToggle={() => setTheme((current) => current === 'dark' ? 'light' : 'dark')} />
 
-  return <div className="app-shell">
-    <aside className={`sidebar ${mobileMenu ? 'open' : ''}`}>
-      <div className="brand"><div className="brand-mark"><Croissant size={24} /></div><div><strong>Bakery POS</strong><span>{t('brandSubtitle')}</span></div></div>
-      <nav>{nav.map(({ id, label, icon: Icon }) => <button key={id} className={page === id ? 'active' : ''} onClick={() => { setPage(id); setMobileMenu(false) }}><Icon size={20} /><span>{label}</span>{page === id && <i />}</button>)}</nav>
-      <div className="sidebar-note"><div><Sparkles size={18} /></div><strong>{t('freshnessFirst')}</strong><p>{t('freshnessDescription')}</p></div>
-      <div className="sidebar-footer"><span className="online-dot" />{t('allChangesSaved')}<ThemeToggle theme={theme} onToggle={() => setTheme((current) => current === 'dark' ? 'light' : 'dark')} />{auth?.required && <button onClick={handleLogout} aria-label={t('signOut')}><LogOut size={15} /></button>}</div>
+  return <div className={`app-shell ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
+    <aside className={`sidebar ${mobileMenu ? 'open' : ''} ${sidebarCollapsed ? 'collapsed' : ''}`}>
+      <div className="brand"><button ref={brandLogoRef} className="brand-logo" onClick={toggleSidebar} aria-expanded={!sidebarCollapsed} aria-label={sidebarCollapsed ? t('expandSidebar') : t('collapseSidebar')} title={sidebarCollapsed ? t('expandSidebar') : t('collapseSidebar')}><span className="brand-mark"><Croissant size={24} /></span></button><span className="brand-copy"><strong>Bakery POS</strong><span>{t('brandSubtitle')}</span></span><button className="sidebar-toggle" onClick={toggleSidebar} aria-label={t('collapseSidebar')} title={t('collapseSidebar')}><PanelLeftClose size={17} /></button></div>
+      <nav>{nav.map(({ id, label, icon: Icon }) => <button key={id} className={page === id ? 'active' : ''} title={sidebarCollapsed ? label : undefined} onClick={() => { setPage(id); setMobileMenu(false) }}><Icon size={20} /><span className="nav-label">{label}</span>{page === id && <i />}</button>)}</nav>
+      <div className="sidebar-footer"><ThemeToggle theme={theme} onToggle={() => setTheme((current) => current === 'dark' ? 'light' : 'dark')} />{auth?.required && <button onClick={handleLogout} aria-label={t('signOut')}><LogOut size={15} /></button>}</div>
     </aside>
     {mobileMenu && <button className="menu-backdrop" onClick={() => setMobileMenu(false)} aria-label={t('close')} />}
     <main className="main-content">
-      <header className="topbar"><button className="icon-button menu-button" onClick={() => setMobileMenu(true)} aria-label={t('openMenu')}><Menu size={21} /></button><div><span>Bakery POS</span><strong>{pageTitle}</strong></div><ThemeToggle theme={theme} onToggle={() => setTheme((current) => current === 'dark' ? 'light' : 'dark')} /><LanguageToggle />{['dashboard', 'inventory'].includes(page) && <button className="button primary mobile-add" onClick={() => setModal({ type: 'add' })}><Plus size={20} /><span>{t('add')}</span></button>}<div className="date-chip"><Clock3 size={17} /><span>{formatDate(new Date().toISOString().slice(0, 10))}</span></div></header>
+      <header className="topbar"><button className="icon-button menu-button" onClick={() => setMobileMenu(true)} aria-label={t('openMenu')}><Menu size={21} /></button><div className="topbar-context"><span>Bakery POS</span><strong>{pageTitle}</strong></div>{page === 'pos' && <button className={`terminal-chip topbar-terminal ${posConfig.configured ? 'ready' : ''}`} onClick={checkPoint} disabled={!posConfig.configured} aria-label={t('pointStatus')} title={posConfig.configured ? t('pointStatus') : t('pointOffline')}><Wifi size={15} /><span className="terminal-dot" /><span className="topbar-terminal-copy"><strong>{posConfig.mockMode ? t('pointDemoMode') : posConfig.configured ? `Point · ${posConfig.terminalLabel}` : t('pointOffline')}</strong><small>{posConfig.mockMode ? t('pointDemoMode') : posConfig.configured ? t('pointStatusReady') : t('pointOffline')}</small></span></button>}<span className="topbar-spacer" /><ThemeToggle theme={theme} onToggle={() => setTheme((current) => current === 'dark' ? 'light' : 'dark')} /><LanguageToggle />{['dashboard', 'inventory'].includes(page) && <button className="button primary mobile-add" onClick={() => setModal({ type: 'add' })}><Plus size={20} /><span>{t('add')}</span></button>}<div className="date-chip"><Clock3 size={17} /><span>{formatDate(new Date().toISOString().slice(0, 10))}</span></div></header>
       {loading ? <div className="loading"><div className="loader-mark"><Croissant size={28} /></div><span>{t('preparing')}</span></div> : <>
         {page === 'dashboard' && <Dashboard items={items} movements={movements} sales={sales} onAdd={() => setModal({ type: 'add' })} onAdjust={(item) => setModal({ type: 'adjust', item })} onGoInventory={() => setPage('inventory')} onGoPos={() => setPage('pos')} />}
         {page === 'pos' && <SalesCounter items={items} sales={sales} posConfig={posConfig} onRefresh={refresh} setToast={setToast} />}
