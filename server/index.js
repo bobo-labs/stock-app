@@ -180,37 +180,57 @@ async function reconcilePointSale(sale, knownOrder = null) {
 
 app.get('/api/health', (_req, res) => res.json({ ok: true }))
 
-app.post('/api/mercadopago/webhook', (req, res) => {
-  const dataId = String(req.query['data.id'] || req.body?.data?.id || '')
-  const valid = validatePointWebhook({
-    signature: req.headers['x-signature'],
-    requestId: req.headers['x-request-id'],
-    dataId,
-  })
-  if (!valid) return res.status(401).json({ error: 'Invalid webhook signature.' })
-  res.status(200).end()
+app.post('/api/mercadopago/webhook', async (req, res, next) => {
+  try {
+    const dataId = String(req.query['data.id'] || req.body?.data?.id || '').trim()
+    const signatureValid = validatePointWebhook({
+      signature: req.headers['x-signature'],
+      requestId: req.headers['x-request-id'],
+      dataId,
+    })
+    let knownSale = null
 
-  setImmediate(async () => {
-    const startedAt = performance.now()
-    try {
-      const sale = await getSaleByPointOrder(dataId)
-      if (!sale && pointConfiguration().mockMode) return
-      const order = await getPointOrder(dataId, sale)
-      const updatedSale = await reconcilePointSale(sale, order)
-      console.info(JSON.stringify({
-        event: 'point_webhook_status',
+    if (!signatureValid) {
+      // Some live Point notifications have produced signatures that differ from
+      // the dashboard simulator. Never trust that payload: only use a known,
+      // high-entropy order id as a hint and fetch the authoritative order below.
+      if (!/^ORD[A-Z0-9]{20,}$/i.test(dataId)) return res.status(401).json({ error: 'Invalid webhook signature.' })
+      knownSale = await getSaleByPointOrder(dataId)
+      if (!knownSale) return res.status(401).json({ error: 'Invalid webhook signature.' })
+      console.warn(JSON.stringify({
+        event: 'point_webhook_signature_fallback',
         requestId: req.headers['x-request-id'] || null,
-        saleId: updatedSale?.id || sale?.id || null,
-        from: sale?.mpStatus || null,
-        to: updatedSale?.mpStatus || order.status || null,
-        status: updatedSale?.status || null,
-        ageMs: updatedSale ? Date.now() - new Date(updatedSale.createdAt).getTime() : null,
-        totalMs: elapsedMilliseconds(startedAt),
+        saleId: knownSale.id,
+        orderId: dataId,
       }))
-    } catch (error) {
-      console.error('Mercado Pago webhook processing failed:', error)
     }
-  })
+
+    res.status(200).end()
+    setImmediate(async () => {
+      const startedAt = performance.now()
+      try {
+        const sale = knownSale || await getSaleByPointOrder(dataId)
+        if (!sale && pointConfiguration().mockMode) return
+        const order = await getPointOrder(dataId, sale)
+        const updatedSale = await reconcilePointSale(sale, order)
+        console.info(JSON.stringify({
+          event: 'point_webhook_status',
+          requestId: req.headers['x-request-id'] || null,
+          signatureValid,
+          saleId: updatedSale?.id || sale?.id || null,
+          from: sale?.mpStatus || null,
+          to: updatedSale?.mpStatus || order.status || null,
+          status: updatedSale?.status || null,
+          ageMs: updatedSale ? Date.now() - new Date(updatedSale.createdAt).getTime() : null,
+          totalMs: elapsedMilliseconds(startedAt),
+        }))
+      } catch (error) {
+        console.error('Mercado Pago webhook processing failed:', error)
+      }
+    })
+  } catch (error) {
+    next(error)
+  }
 })
 
 app.get('/api/auth/status', (req, res) => res.json(authStatus(req)))

@@ -15,6 +15,8 @@ const categories = ['Bread', 'Pastries', 'Cakes', 'Ingredients', 'Packaging', 'D
 const units = ['pieces', 'loaves', 'cakes', 'kg', 'g', 'litres', 'bottles', 'boxes', 'packs']
 const categoryIcons = { Bread: Wheat, Pastries: Croissant, Cakes: CakeSlice, Ingredients: Wheat, Packaging: PackageOpen, Drinks: Coffee, Other: Sparkles }
 const AstryxDeleteDialog = lazy(() => import('./AstryxDeleteDialog.jsx'))
+let openModalCount = 0
+const noop = () => {}
 
 function categoryClass(category = '') {
   return category.toLowerCase().replace(/[^a-z0-9]+/g, '-')
@@ -104,8 +106,13 @@ function Modal({ title, eyebrow, onClose, children, wide = false, closeable = tr
       if (event.key === 'Escape' && closeable && !document.querySelector('dialog[open]')) onClose()
     }
     document.addEventListener('keydown', onKey)
+    openModalCount += 1
     document.body.classList.add('modal-open')
-    return () => { document.removeEventListener('keydown', onKey); document.body.classList.remove('modal-open') }
+    return () => {
+      document.removeEventListener('keydown', onKey)
+      openModalCount = Math.max(0, openModalCount - 1)
+      if (openModalCount === 0) document.body.classList.remove('modal-open')
+    }
   }, [closeable, onClose])
 
   return createPortal(<div className="modal-backdrop" role="presentation" onMouseDown={(event) => closeable && event.target === event.currentTarget && onClose()}>
@@ -118,6 +125,34 @@ function Modal({ title, eyebrow, onClose, children, wide = false, closeable = tr
       {children}
     </section>
   </div>, document.body)
+}
+
+function RefundInventoryPrompt({ sale, refund, onResolve, busy }) {
+  const { t, unitLabel, formatCurrency } = useI18n()
+  const reference = sale.mpExternalReference || `#${sale.shortId}`
+  return <Modal title={t('stockDecisionTitle')} eyebrow={t('externalRefundDetected')} onClose={noop} closeable={false}>
+    <div className="inventory-decision">
+      <div className="inventory-decision-summary">
+        <div className="inventory-decision-icon"><Undo2 size={22} /></div>
+        <div><span>{t('refundedSaleReference', { reference })}</span><strong>{formatCurrency(refund.amount)}</strong><small>{t('stockDecisionDescription')}</small></div>
+      </div>
+      <div className="inventory-decision-lines">
+        <span className="section-label">{t('returnedProducts')}</span>
+        {refund.items.map((item) => {
+          const originalLine = sale.items.find((line) => line.lineId === item.lineId)
+          return <div key={item.lineId || item.itemId || item.name}>
+            <span><strong>{item.name}</strong><small>{formatCurrency(item.lineTotal || item.unitPrice * item.quantity)}</small></span>
+            <b>{formatQuantity(item.quantity)} {originalLine?.unit ? unitLabel(originalLine.unit) : ''}</b>
+          </div>
+        })}
+      </div>
+      <div className="inventory-decision-note"><AlertTriangle size={17} /><span>{t('stockDecisionHelp')}</span></div>
+      <div className="modal-actions inventory-decision-actions">
+        <button type="button" className="button secondary" onClick={() => onResolve(sale.id, refund.id, false)} disabled={busy}><Check size={18} />{t('doNotRestock')}</button>
+        <button type="button" className="button primary" onClick={() => onResolve(sale.id, refund.id, true)} disabled={busy || !refund.items.length}><PackageOpen size={18} />{t('restockProducts')}</button>
+      </div>
+    </div>
+  </Modal>
 }
 
 function ProductForm({ item, onSubmit, onDelete, onClose, busy, theme }) {
@@ -809,6 +844,13 @@ export default function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => window.localStorage.getItem('bakery-sidebar') !== 'expanded')
   const [theme, setTheme] = useState(() => window.localStorage.getItem('bakery-theme') === 'dark' ? 'dark' : 'light')
   const brandLogoRef = useRef(null)
+  const pendingInventoryReview = useMemo(() => {
+    for (const sale of sales) {
+      const refund = sale.refunds?.find((entry) => entry.status === 'processed' && entry.inventoryReviewStatus === 'pending')
+      if (refund) return { sale, refund }
+    }
+    return null
+  }, [sales])
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme
@@ -822,6 +864,7 @@ export default function App() {
     const [nextItems, nextMovements, nextSales, nextPosConfig] = await Promise.all([api.items(), api.movements(), api.sales(), api.posConfig()])
     setItems(nextItems); setMovements(nextMovements); setSales(nextSales); setPosConfig(nextPosConfig)
   }, [])
+  const refreshSales = useCallback(async () => setSales(await api.sales()), [])
   const loadMetrics = useCallback(async (range = metricsRange) => {
     setMetricsLoading(true)
     try { setMetricsData(await api.metrics(range)) }
@@ -834,6 +877,18 @@ export default function App() {
       if (status.authenticated) await refresh()
     }).catch((error) => setToast({ type: 'error', message: error.message })).finally(() => setLoading(false))
   }, [refresh])
+  useEffect(() => {
+    if (!auth?.authenticated) return undefined
+    const poll = () => {
+      if (document.visibilityState === 'visible') refreshSales().catch(() => {})
+    }
+    const interval = window.setInterval(poll, 6000)
+    document.addEventListener('visibilitychange', poll)
+    return () => {
+      window.clearInterval(interval)
+      document.removeEventListener('visibilitychange', poll)
+    }
+  }, [auth?.authenticated, refreshSales])
   useEffect(() => { if (page === 'metrics' && auth?.authenticated) loadMetrics(metricsRange) }, [auth?.authenticated, loadMetrics, metricsRange, page])
   useEffect(() => { if (!toast) return; const id = setTimeout(() => setToast(null), 4200); return () => clearTimeout(id) }, [toast])
 
@@ -869,6 +924,19 @@ export default function App() {
   const editItem = (item, form) => perform(() => api.updateItem(item.id, form), t('productUpdated', { name: form.name }))
   const deleteItem = (item) => perform(() => api.deleteItem(item.id), t('productDeleted', { name: item.name }))
   const adjustItem = (item, form) => perform(() => api.adjustItem(item.id, form), t('stockUpdated', { name: item.name }))
+  const resolvePendingRefundInventory = async (saleId, refundId, restock) => {
+    setBusy(true)
+    try {
+      await api.resolveRefundInventory(saleId, refundId, restock)
+      await refresh()
+      setToast({ type: 'success', message: restock ? t('inventoryRestocked') : t('inventoryNotRestocked') })
+    } catch (error) {
+      if (error.status === 401) setAuth((current) => ({ ...current, authenticated: false }))
+      setToast({ type: 'error', message: error.message })
+    } finally {
+      setBusy(false)
+    }
+  }
   const saveCashClose = async (form) => {
     setBusy(true)
     try {
@@ -923,6 +991,7 @@ export default function App() {
     {modal?.type === 'edit' && <Modal title={modal.item.name} eyebrow={t('productDetails')} onClose={() => setModal(null)}><ProductForm item={modal.item} onSubmit={(form) => editItem(modal.item, form)} onDelete={() => deleteItem(modal.item)} onClose={() => setModal(null)} busy={busy} theme={theme} /></Modal>}
     {modal?.type === 'adjust' && <Modal title={modal.item.name} eyebrow={t('updateStock')} onClose={() => setModal(null)}><AdjustForm item={modal.item} onSubmit={(form) => adjustItem(modal.item, form)} onClose={() => setModal(null)} busy={busy} /></Modal>}
     {modal?.type === 'cash-close' && metricsData && <Modal title={t('dayClose')} eyebrow={t('closeSummary')} onClose={() => setModal(null)}><CashCloseForm metrics={metricsData} onSubmit={saveCashClose} onClose={() => setModal(null)} busy={busy} /></Modal>}
+    {pendingInventoryReview && <RefundInventoryPrompt sale={pendingInventoryReview.sale} refund={pendingInventoryReview.refund} onResolve={resolvePendingRefundInventory} busy={busy} />}
     {toast && <div className={`toast ${toast.type}`} role="status"><div>{toast.type === 'success' ? <Check size={18} /> : <AlertTriangle size={18} />}</div><span>{toast.message}</span><button onClick={() => setToast(null)} aria-label={t('close')}><X size={16} /></button></div>}
   </div>
 }

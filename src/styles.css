@@ -388,6 +388,24 @@ h1, h2, h3, p { margin-top: 0; }
 .refund-icon.pending { background: var(--amber-soft); color: var(--amber); }
 .refund-actions { display: flex; grid-column: 2; flex-wrap: wrap; gap: 7px; }
 .refund-actions .button.compact { min-height: 34px; padding-inline: 10px; font-size: 9px; }
+.inventory-decision { padding: 20px 24px 24px; }
+.inventory-decision-summary { display: grid; grid-template-columns: auto minmax(0,1fr); align-items: center; gap: 13px; padding-bottom: 17px; border-bottom: 1px solid var(--line); }
+.inventory-decision-icon { display: grid; width: 46px; height: 46px; place-items: center; border-radius: 12px; background: var(--rose-soft); color: var(--danger); }
+.inventory-decision-summary :is(span,strong,small) { display: block; }
+.inventory-decision-summary span { margin-bottom: 2px; color: var(--muted); font-size: 9px; font-weight: 700; }
+.inventory-decision-summary strong { margin-bottom: 3px; font-size: 23px; }
+.inventory-decision-summary small { color: var(--muted); font-size: 9px; line-height: 1.45; }
+.inventory-decision-lines { padding: 16px 0 5px; }
+.inventory-decision-lines > .section-label { display: block; margin-bottom: 6px; }
+.inventory-decision-lines > div { display: flex; min-height: 48px; align-items: center; justify-content: space-between; gap: 14px; border-bottom: 1px solid var(--line); }
+.inventory-decision-lines > div:last-child { border-bottom: 0; }
+.inventory-decision-lines strong, .inventory-decision-lines small { display: block; }
+.inventory-decision-lines strong { margin-bottom: 2px; font-size: 11px; }
+.inventory-decision-lines small { color: var(--muted); font-size: 9px; }
+.inventory-decision-lines b { flex: 0 0 auto; font-size: 11px; }
+.inventory-decision-note { display: flex; align-items: flex-start; gap: 9px; margin: 11px 0 18px; padding: 11px 12px; border-radius: 10px; background: var(--amber-soft); color: #795620; font-size: 9px; line-height: 1.5; }
+.inventory-decision-note svg { flex: 0 0 auto; }
+.inventory-decision-actions { margin-top: 0; }
 .inventory-review-actions { display: flex; flex: 1 1 100%; flex-wrap: wrap; align-items: center; gap: 7px; padding: 9px; border: 1px solid color-mix(in srgb,var(--amber) 30%,var(--line)); border-radius: 10px; background: var(--amber-soft); }
 .inventory-review-actions > span { display: inline-flex; flex: 1 1 130px; align-items: center; gap: 6px; color: #795620; font-size: 9px; font-weight: 750; }
 .credit-note-state { display: inline-flex; align-items: center; gap: 5px; color: var(--sage); font-size: 9px; font-weight: 750; }
@@ -870,6 +888,7 @@ html[data-theme='dark'] :is(.sale-detail-summary,.refund-total,.refund-switch) {
 html[data-theme='dark'] .refund-lines label { border-color: var(--line); background: var(--surface-strong); }
 html[data-theme='dark'] .refund-lines input { border-color: var(--line); background: #2d2e30; }
 html[data-theme='dark'] .refund-payment-hint { color: #ebc487; }
+html[data-theme='dark'] .inventory-decision-note { color: #ebc487; }
 html[data-theme='dark'] .inventory-review-actions > span { color: #ebc487; }
 html[data-theme='dark'] :is(.point-payment-details,.point-payment-details > header) { border-color: var(--line); }
 html[data-theme='dark'] .bar-well i { background: linear-gradient(180deg,#d2a18c,var(--cocoa)); }
@@ -894,4 +913,7 @@ html[data-theme='dark'] .sale-product.category-drinks { --tile-accent: #91c3ad; 
   .sale-details-body .modal-actions, .refund-form .modal-actions { flex-direction: column-reverse; }
   .sale-details-body .modal-actions .button, .refund-form .modal-actions .button { width: 100%; }
   .refund-actions { grid-column: 1 / -1; }
+  .inventory-decision { padding: 17px; }
+  .inventory-decision-actions { flex-direction: column-reverse; }
+  .inventory-decision-actions .button { width: 100%; }
 }

@@ -190,17 +190,18 @@ test('external Point refunds reconcile once and require an explicit inventory de
 })
 
 test('Mercado Pago webhook signatures use the documented manifest', async () => {
-  process.env.MERCADOPAGO_WEBHOOK_SECRET = 'webhook-test-secret'
+  const webhookSecret = 'webhook-test-secret'
+  process.env.MERCADOPAGO_WEBHOOK_SECRET = `${webhookSecret}\n`
   process.env.MERCADOPAGO_MOCK = 'false'
   const point = await import(`./mercadopago.js?test=${Date.now()}`)
   const dataId = 'ORDER-123'
   const requestId = 'request-456'
   const timestamp = '1750000000'
   const manifest = `id:${dataId};request-id:${requestId};ts:${timestamp};`
-  const digest = crypto.createHmac('sha256', process.env.MERCADOPAGO_WEBHOOK_SECRET).update(manifest).digest('hex')
+  const digest = crypto.createHmac('sha256', webhookSecret).update(manifest).digest('hex')
 
   assert.equal(point.validatePointWebhook({
-    signature: `ts=${timestamp},v1=${digest}`,
+    signature: `v2=ignored, v1=${digest}, ts=${timestamp}`,
     requestId,
     dataId,
   }), true)

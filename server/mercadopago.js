@@ -1,4 +1,5 @@
 import crypto from 'node:crypto'
+import { WebhookSignatureValidator } from 'mercadopago'
 
 const apiBase = process.env.MERCADOPAGO_API_BASE || 'https://api.mercadopago.com'
 const mockMode = process.env.MERCADOPAGO_MOCK === 'true'
@@ -199,13 +200,17 @@ export async function getConfiguredTerminal() {
 export function validatePointWebhook({ signature, requestId, dataId }) {
   const { webhookSecret } = credentials()
   if (mockMode) return true
-  if (!webhookSecret || !signature || !requestId || !dataId) return false
+  if (!webhookSecret || !signature || !dataId) return false
 
-  const parts = Object.fromEntries(signature.split(',').map((part) => part.trim().split('=')))
-  if (!parts.ts || !parts.v1) return false
-  const manifest = `id:${dataId};request-id:${requestId};ts:${parts.ts};`
-  const expected = crypto.createHmac('sha256', webhookSecret).update(manifest).digest('hex')
-  const expectedBuffer = Buffer.from(expected)
-  const receivedBuffer = Buffer.from(parts.v1)
-  return expectedBuffer.length === receivedBuffer.length && crypto.timingSafeEqual(expectedBuffer, receivedBuffer)
+  try {
+    WebhookSignatureValidator.validate({
+      xSignature: signature,
+      xRequestId: requestId,
+      dataId,
+      secret: webhookSecret.trim(),
+    })
+    return true
+  } catch {
+    return false
+  }
 }
