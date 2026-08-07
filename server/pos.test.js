@@ -132,6 +132,63 @@ test('partial and full refunds are idempotent, restore selected stock, and track
   }
 })
 
+test('external Point refunds reconcile once and require an explicit inventory decision', async () => {
+  const temporaryDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'bakery-point-reconcile-test-'))
+  process.env.DATA_PATH = path.join(temporaryDirectory, 'inventory.json')
+  process.env.SEED_DEMO_DATA = 'false'
+  const store = await import(`./store.js?point-reconcile=${Date.now()}`)
+
+  try {
+    await store.initializeStore()
+    const product = await store.createItem({
+      name: 'Point refund pastry', category: 'Pastries', unit: 'pieces', quantity: 10,
+      lowStockThreshold: 2, sku: 'POINT-REFUND-1', expiryDate: null, price: 500, sellable: true,
+    })
+    const reserved = await store.createSale([{ itemId: product.id, quantity: 2 }], 'card')
+    const paidOrder = {
+      id: 'POINT-ORDER-EXTERNAL-1', external_reference: reserved.mpExternalReference,
+      status: 'processed', status_detail: 'accredited',
+      transactions: { payments: [{ id: 'POINT-PAYMENT-1', reference_id: '172570565606', status: 'processed', status_detail: 'accredited' }] },
+    }
+    await store.attachPointOrder(reserved.id, paidOrder)
+    await store.updateSaleFromPoint(paidOrder)
+    await store.updateSalePaymentDetails(reserved.id, {
+      id: 172570565606, authorization_code: '253893', payment_method_id: 'master', payment_type_id: 'prepaid_card',
+      card: { last_four_digits: '1249' }, fee_details: [{ amount: 21 }],
+      transaction_details: { net_received_amount: 979 }, additional_info: { tax_setting: 'CHARGE_TAXABLE_19' },
+    })
+
+    const refundedOrder = {
+      ...paidOrder, status: 'refunded', status_detail: 'refunded',
+      transactions: {
+        payments: paidOrder.transactions.payments,
+        refunds: [{ id: 'POINT-REFUND-EXTERNAL-1', reference_id: '3166415073', amount: '1000', status: 'processed' }],
+      },
+    }
+    const reconciled = await store.updateSaleFromPoint(refundedOrder)
+    assert.equal(reconciled.status, 'refunded')
+    assert.equal(reconciled.refundedTotal, 1000)
+    assert.equal(reconciled.refunds.length, 1)
+    assert.equal(reconciled.refunds[0].source, 'point_terminal')
+    assert.equal(reconciled.refunds[0].inventoryReviewStatus, 'pending')
+    assert.equal(reconciled.refunds[0].items[0].quantity, 2)
+    assert.equal(reconciled.mpCardLastFour, '1249')
+    assert.equal(reconciled.mpFeeAmount, 21)
+    assert.equal(reconciled.mpTaxSetting, 'CHARGE_TAXABLE_19')
+    assert.equal((await store.listItems())[0].quantity, 8)
+
+    assert.equal((await store.updateSaleFromPoint(refundedOrder)).refunds.length, 1)
+    const resolved = await store.resolveRefundInventoryReview(reserved.id, reconciled.refunds[0].id, true)
+    assert.equal(resolved.refunds[0].inventoryReviewStatus, 'resolved')
+    assert.equal((await store.listItems())[0].quantity, 10)
+    await store.resolveRefundInventoryReview(reserved.id, reconciled.refunds[0].id, true)
+    assert.equal((await store.listItems())[0].quantity, 10)
+  } finally {
+    await store.closeStore()
+    await fs.rm(temporaryDirectory, { recursive: true, force: true })
+  }
+})
+
 test('Mercado Pago webhook signatures use the documented manifest', async () => {
   process.env.MERCADOPAGO_WEBHOOK_SECRET = 'webhook-test-secret'
   process.env.MERCADOPAGO_MOCK = 'false'

@@ -5,13 +5,14 @@ import compression from 'compression'
 import express from 'express'
 import { authStatus, login, logout, pointAccessIsProtected, requireAuth } from './auth.js'
 import {
-  cancelPointOrder, createPointOrder, getConfiguredTerminal, getPointOrder,
+  cancelPointOrder, createPointOrder, getConfiguredTerminal, getPointOrder, getPointPayment,
   pointConfiguration, refundPointOrder, validatePointWebhook,
 } from './mercadopago.js'
 import {
   adjustItem, attachPointOrder, closeStore, completeRefund, createItem, createSale, deleteItem, failRefund, getSale,
   getSaleByPointOrder, getSalesMetrics, initializeStore, listItems, listMovements, listSales,
-  markCardSaleFailed, prepareRefund, recordCreditNote, saveCashClosure, updateItem, updateSaleFromPoint,
+  markCardSaleFailed, prepareRefund, recordCreditNote, resolveRefundInventoryReview, saveCashClosure,
+  updateItem, updateSaleFromPoint, updateSalePaymentDetails,
 } from './store.js'
 import { createDailyReport } from './report.js'
 
@@ -158,6 +159,25 @@ function logPointTiming(requestId, sale, outcome, timings) {
   }))
 }
 
+async function enrichPointPayment(sale, order) {
+  const paymentReference = order?.transactions?.payments?.[0]?.reference_id
+  if (!sale || !paymentReference) return sale
+  try {
+    const payment = await getPointPayment(paymentReference)
+    return await updateSalePaymentDetails(sale.id, payment) || sale
+  } catch (error) {
+    console.error('Mercado Pago payment enrichment failed:', error)
+    return sale
+  }
+}
+
+async function reconcilePointSale(sale, knownOrder = null) {
+  if (!sale?.mpOrderId && !knownOrder?.id) return sale
+  const order = knownOrder || await getPointOrder(sale.mpOrderId, sale)
+  const updated = await updateSaleFromPoint(order)
+  return enrichPointPayment(updated || sale, order)
+}
+
 app.get('/api/health', (_req, res) => res.json({ ok: true }))
 
 app.post('/api/mercadopago/webhook', (req, res) => {
@@ -176,7 +196,7 @@ app.post('/api/mercadopago/webhook', (req, res) => {
       const sale = await getSaleByPointOrder(dataId)
       if (!sale && pointConfiguration().mockMode) return
       const order = await getPointOrder(dataId, sale)
-      const updatedSale = await updateSaleFromPoint(order)
+      const updatedSale = await reconcilePointSale(sale, order)
       console.info(JSON.stringify({
         event: 'point_webhook_status',
         requestId: req.headers['x-request-id'] || null,
@@ -342,6 +362,7 @@ app.get('/api/sales/:id', async (req, res, next) => {
         const persistStartedAt = performance.now()
         sale = await updateSaleFromPoint(order)
         persistDuration = elapsedMilliseconds(persistStartedAt)
+        if (sale.status !== 'pending') setImmediate(() => enrichPointPayment(sale, order).catch(console.error))
       }
       const timings = {
         mercadopago: mercadoPagoDuration,
@@ -362,6 +383,17 @@ app.get('/api/sales/:id', async (req, res, next) => {
       }
     }
     res.json(sale)
+  } catch (error) { next(error) }
+})
+app.post('/api/sales/:id/reconcile-point', async (req, res, next) => {
+  try {
+    requireProtectedPoint()
+    const sale = await getSale(req.params.id)
+    if (!sale) return res.status(404).json({ error: 'Sale not found.' })
+    if (sale.paymentMethod !== 'card' || !sale.mpOrderId) {
+      throw Object.assign(new Error('This sale has no Point order to synchronize.'), { status: 409 })
+    }
+    res.json(await reconcilePointSale(sale))
   } catch (error) { next(error) }
 })
 app.post('/api/sales/:id/cancel', async (req, res, next) => {
@@ -416,6 +448,14 @@ app.patch('/api/sales/:saleId/refunds/:refundId/credit-note', async (req, res, n
   try {
     const sale = await recordCreditNote(req.params.saleId, req.params.refundId, cleanCreditNote(req.body))
     if (!sale) return res.status(404).json({ error: 'Processed refund not found.' })
+    res.json(sale)
+  } catch (error) { next(error) }
+})
+app.patch('/api/sales/:saleId/refunds/:refundId/inventory-review', async (req, res, next) => {
+  try {
+    if (typeof req.body?.restock !== 'boolean') throw badRequest('Choose whether the returned products go back into inventory.')
+    const sale = await resolveRefundInventoryReview(req.params.saleId, req.params.refundId, req.body.restock)
+    if (!sale) return res.status(404).json({ error: 'Refund not found.' })
     res.json(sale)
   } catch (error) { next(error) }
 })

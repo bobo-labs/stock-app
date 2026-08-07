@@ -56,12 +56,13 @@ function mockOrder(sale, status = 'created') {
   return {
     id: `MOCK-${sale.id}`,
     type: 'point',
-    external_reference: `sale-${sale.id}`,
+    external_reference: sale.mpExternalReference || `VENTA-${sale.shortId}`,
     status,
     status_detail: processed ? 'accredited' : status,
     transactions: {
       payments: [{
         id: `MOCK-PAY-${sale.id}`,
+        reference_id: `MOCK-OP-${sale.shortId}`,
         amount: String(sale.total),
         paid_amount: processed ? String(sale.total) : undefined,
         status,
@@ -114,7 +115,7 @@ export async function createPointOrder(sale) {
     idempotencyKey: sale.id,
     body: {
       type: 'point',
-      external_reference: `sale-${sale.id}`,
+      external_reference: sale.mpExternalReference || `VENTA-${sale.shortId}`,
       expiration_time: 'PT10M',
       description: `Bakery sale ${sale.shortId}`,
       transactions: { payments: [{ amount: String(Math.round(sale.total)) }] },
@@ -134,6 +135,21 @@ export async function getPointOrder(orderId, sale) {
     return mockOrder(sale, age > 1200 ? 'processed' : 'at_terminal')
   }
   return mercadoPagoRequest(`/v1/orders/${encodeURIComponent(orderId)}`)
+}
+
+export async function getPointPayment(paymentId) {
+  if (mockMode) return {
+    id: paymentId,
+    authorization_code: 'MOCK-AUTH',
+    payment_method_id: 'visa',
+    payment_type_id: 'credit_card',
+    card: { last_four_digits: '4242' },
+    fee_details: [{ type: 'mercadopago_fee', amount: 21 }],
+    transaction_details: { net_received_amount: 979 },
+    point_of_interaction: { transaction_data: { terminal_id: 'MOCK_POINT_SMART_2' } },
+    additional_info: { tax_setting: 'CHARGE_TAXABLE_19' },
+  }
+  return mercadoPagoRequest(`/v1/payments/${encodeURIComponent(paymentId)}`)
 }
 
 export async function cancelPointOrder(orderId, sale) {

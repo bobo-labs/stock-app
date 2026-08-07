@@ -63,5 +63,7 @@ export const api = {
   cancelSale: (id) => request(`/api/sales/${id}/cancel`, { method: 'POST' }),
   refundSale: (id, refund) => request(`/api/sales/${id}/refunds`, { method: 'POST', body: JSON.stringify(refund) }),
   retryRefund: (saleId, refundId) => request(`/api/sales/${saleId}/refunds/${refundId}/retry`, { method: 'POST' }),
+  reconcilePointSale: (saleId) => request(`/api/sales/${saleId}/reconcile-point`, { method: 'POST' }),
+  resolveRefundInventory: (saleId, refundId, restock) => request(`/api/sales/${saleId}/refunds/${refundId}/inventory-review`, { method: 'PATCH', body: JSON.stringify({ restock }) }),
   recordCreditNote: (saleId, refundId, creditNote) => request(`/api/sales/${saleId}/refunds/${refundId}/credit-note`, { method: 'PATCH', body: JSON.stringify(creditNote) }),
 }

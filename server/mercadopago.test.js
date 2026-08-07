@@ -65,6 +65,15 @@ test('Point adapter follows the documented Orders API contract', async () => {
         status: 'processed', status_detail: 'accredited', transactions: { payments: [{ id: 'PAY-MOCK-1', status: 'processed', status_detail: 'accredited' }] },
       }))
     }
+    if (request.method === 'GET' && request.url === '/v1/payments/172570565606') {
+      return response.end(JSON.stringify({
+        id: 172570565606, authorization_code: '253893', payment_method_id: 'master',
+        payment_type_id: 'prepaid_card', card: { last_four_digits: '1249' },
+        fee_details: [{ type: 'mercadopago_fee', amount: 21 }],
+        transaction_details: { net_received_amount: 979 },
+        additional_info: { tax_setting: 'CHARGE_TAXABLE_19' },
+      }))
+    }
     if (request.method === 'POST' && request.url === '/v1/orders/ORD-MOCK-1/cancel') {
       return response.end(JSON.stringify({
         id: 'ORD-MOCK-1', type: 'point', external_reference: 'sale-sale-uuid-1',
@@ -94,7 +103,7 @@ test('Point adapter follows the documented Orders API contract', async () => {
     process.env.MERCADOPAGO_POINT_TERMINAL_ID = terminalId
     process.env.MERCADOPAGO_WEBHOOK_SECRET = 'test-webhook-secret'
     const point = await import(`./mercadopago.js?contract=${Date.now()}`)
-    const sale = { id: 'sale-uuid-1', shortId: 'SALE0001', total: 4850, createdAt: new Date().toISOString() }
+    const sale = { id: 'sale-uuid-1', shortId: 'SALE0001', mpExternalReference: 'VENTA-SALE0001', total: 4850, createdAt: new Date().toISOString() }
 
     assert.deepEqual(point.pointConfiguration(), {
       configured: true,
@@ -116,6 +125,7 @@ test('Point adapter follows the documented Orders API contract', async () => {
     const created = await point.createPointOrder(sale)
     assert.equal(created.status, 'created')
     assert.equal((await point.getPointOrder(created.id, sale)).status, 'processed')
+    assert.equal((await point.getPointPayment('172570565606')).authorization_code, '253893')
     assert.equal((await point.cancelPointOrder(created.id, sale)).status, 'canceled')
     const refunded = await point.refundPointOrder(created.id, { ...sale, mpPaymentId: 'PAY-MOCK-1' }, {
       id: 'refund-uuid-1', amount: 1850, full: false,
@@ -126,17 +136,18 @@ test('Point adapter follows the documented Orders API contract', async () => {
       { method: 'GET', url: '/terminals/v1/list?limit=50&offset=0' },
       { method: 'POST', url: '/v1/orders' },
       { method: 'GET', url: '/v1/orders/ORD-MOCK-1' },
+      { method: 'GET', url: '/v1/payments/172570565606' },
       { method: 'POST', url: '/v1/orders/ORD-MOCK-1/cancel' },
       { method: 'POST', url: '/v1/orders/ORD-MOCK-1/refund' },
     ])
     assert.ok(requests.every((request) => request.authorization === 'Bearer test-access-token'))
     assert.equal(requests[1].idempotencyKey, sale.id)
-    assert.match(requests[3].idempotencyKey, /^[0-9a-f]{8}-[0-9a-f-]{27}$/i)
-    assert.equal(requests[4].idempotencyKey, 'refund-uuid-1')
-    assert.deepEqual(requests[4].body, { transactions: [{ id: 'PAY-MOCK-1', amount: '1850' }] })
+    assert.match(requests[4].idempotencyKey, /^[0-9a-f]{8}-[0-9a-f-]{27}$/i)
+    assert.equal(requests[5].idempotencyKey, 'refund-uuid-1')
+    assert.deepEqual(requests[5].body, { transactions: [{ id: 'PAY-MOCK-1', amount: '1850' }] })
     assert.deepEqual(requests[1].body, {
       type: 'point',
-      external_reference: `sale-${sale.id}`,
+      external_reference: sale.mpExternalReference,
       expiration_time: 'PT10M',
       description: `Bakery sale ${sale.shortId}`,
       transactions: { payments: [{ amount: '4850' }] },

@@ -355,12 +355,13 @@ function CheckoutModal({ checkout, posConfig, onCash, onCard, onRetry, onCancelS
     {checkout.stage === 'success' && <div className="payment-result success">
       <div><BadgeCheck size={34} /></div><h3>{t('paymentApproved')}</h3><p>{sale?.paymentMethod === 'card' ? t('cardSaleCompleted') : t('cashSaleCompleted')}</p>
       <div className="success-total"><span>#{sale?.shortId}</span><strong>{formatCurrency(sale?.total || 0)}</strong></div>
+      {sale?.paymentMethod === 'card' && <div className="point-receipt-reminder"><ReceiptText size={17} /><span>{t('deliverPointReceipt')}</span></div>}
       <button className="button primary" onClick={onClose}>{t('newSale')}</button>
     </div>}
   </Modal>
 }
 
-function SaleDetailsModal({ sale, onClose, onRefund, onRetryRefund, onCreditNote, busy }) {
+function SaleDetailsModal({ sale, onClose, onRefund, onRetryRefund, onCreditNote, onReconcilePoint, onResolveInventory, busy }) {
   const { t, formatCurrency, formatTime, unitLabel } = useI18n()
   const [view, setView] = useState('details')
   const [quantities, setQuantities] = useState({})
@@ -385,6 +386,7 @@ function SaleDetailsModal({ sale, onClose, onRefund, onRetryRefund, onCreditNote
   const state = sale.status === 'paid' && sale.refundedTotal > 0
     ? { label: t('salePartiallyRefunded'), tone: 'warning' }
     : saleState(sale.status, t)
+  const pointVoucher = sale.paymentMethod === 'card' && Boolean(sale.mpTaxSetting)
 
   const openRefund = () => {
     setQuantities({})
@@ -425,6 +427,16 @@ function SaleDetailsModal({ sale, onClose, onRefund, onRetryRefund, onCreditNote
         <div><span>{t('refundableAmount')}</span><strong>{formatCurrency(sale.refundableTotal || 0)}</strong></div>
       </div>
       <div className="sale-detail-meta"><span className={`sale-status ${state.tone}`}>{state.label}</span><span>{sale.paymentMethod === 'card' ? t('card') : t('cash')} · {formatTime(sale.createdAt)}</span></div>
+      {sale.paymentMethod === 'card' && <section className="point-payment-details">
+        <header><div><CreditCard size={17} /><strong>{t('pointPaymentDetails')}</strong></div><button type="button" className="button compact" onClick={() => onReconcilePoint().catch(() => {})} disabled={busy}><RotateCw size={15} />{t('syncPoint')}</button></header>
+        <div className="point-payment-grid">
+          <div><span>{t('operationNumber')}</span><strong>{sale.mpOperationId || t('pendingData')}</strong></div>
+          <div><span>{t('paymentCard')}</span><strong>{sale.mpCardBrand ? `${sale.mpCardBrand.toUpperCase()}${sale.mpCardLastFour ? ` ···· ${sale.mpCardLastFour}` : ''}` : t('pendingData')}</strong></div>
+          <div><span>{t('mercadoPagoFee')}</span><strong>{formatCurrency(sale.mpFeeAmount || 0)}</strong></div>
+          <div><span>{t('netReceived')}</span><strong>{sale.mpNetReceivedAmount == null ? t('pendingData') : formatCurrency(sale.mpNetReceivedAmount)}</strong></div>
+        </div>
+        {pointVoucher && <div className="point-document-state"><ReceiptText size={16} /><div><strong>{t('pointVoucher')}</strong><span>{t('pointVoucherDescription')}</span></div></div>}
+      </section>}
       <div className="sale-detail-lines">
         {sale.items.map((line) => <div key={line.lineId}><div><strong>{line.name}</strong><span>{formatQuantity(line.quantity)} {unitLabel(line.unit)} · {formatCurrency(line.unitPrice)}</span></div><b>{formatCurrency(line.lineTotal)}</b></div>)}
       </div>
@@ -433,6 +445,7 @@ function SaleDetailsModal({ sale, onClose, onRefund, onRetryRefund, onCreditNote
         <div><strong>{formatCurrency(refund.amount)}</strong><span>{refund.status === 'processed' ? t('refundCompleted') : refund.status === 'pending' ? t('refundPending') : t('refundFailed')}</span>{refund.reason && <small>{refund.reason}</small>}</div>
         <div className="refund-actions">
           {refund.status === 'pending' && sale.paymentMethod === 'card' && <button className="button compact" onClick={() => onRetryRefund(refund.id).catch(() => {})} disabled={busy}><RotateCw size={15} />{t('retryRefund')}</button>}
+          {refund.inventoryReviewStatus === 'pending' && <div className="inventory-review-actions"><span><AlertTriangle size={14} />{t('inventoryReviewPending')}</span>{refund.items.length > 0 && <button className="button compact" onClick={() => onResolveInventory(refund.id, true).catch(() => {})} disabled={busy}><PackageOpen size={15} />{t('restockProducts')}</button>}<button className="button compact" onClick={() => onResolveInventory(refund.id, false).catch(() => {})} disabled={busy}><Check size={15} />{t('doNotRestock')}</button></div>}
           {refund.creditNote?.status === 'pending' && <button className="button compact" onClick={() => openCreditNote(refund)}><FileCheck2 size={15} />{t('recordCreditNote')}</button>}
           {refund.creditNote?.status === 'issued' && <span className="credit-note-state issued"><FileCheck2 size={15} />{t('creditNoteIssued')} · N° {refund.creditNote.folio}</span>}
         </div>
@@ -450,8 +463,8 @@ function SaleDetailsModal({ sale, onClose, onRefund, onRetryRefund, onCreditNote
       <div className="refund-total"><span>{refundAmount >= sale.refundableTotal ? t('fullRefund') : t('partialRefund')}</span><strong>{formatCurrency(refundAmount)}</strong></div>
       <label className="switch-field refund-switch"><input type="checkbox" checked={refundForm.restock} onChange={(event) => setRefundForm((current) => ({ ...current, restock: event.target.checked }))} /><i aria-hidden="true" /><span><strong>{t('returnToInventory')}</strong><small>{t('returnToInventoryDescription')}</small></span></label>
       <div className="field full"><label htmlFor="refund-reason">{t('refundReason')} <span>{t('optional')}</span></label><input id="refund-reason" value={refundForm.reason} onChange={(event) => setRefundForm((current) => ({ ...current, reason: event.target.value }))} placeholder={t('refundReasonPlaceholder')} /></div>
-      <label className="switch-field refund-switch"><input type="checkbox" checked={refundForm.creditNoteRequired} onChange={(event) => setRefundForm((current) => ({ ...current, creditNoteRequired: event.target.checked }))} /><i aria-hidden="true" /><span><strong>{t('electronicReceiptIssued')}</strong><small>{t('electronicReceiptDescription')}</small></span></label>
-      {refundForm.creditNoteRequired && <div className="form-grid credit-note-reference"><div className="field"><label htmlFor="original-document-type">{t('originalDocumentType')}</label><select id="original-document-type" value={refundForm.originalDocumentType} onChange={(event) => setRefundForm((current) => ({ ...current, originalDocumentType: event.target.value }))}><option value="39">{t('documentType39')}</option><option value="41">{t('documentType41')}</option><option value="33">{t('documentType33')}</option><option value="34">{t('documentType34')}</option></select></div><div className="field"><label htmlFor="original-folio">{t('originalFolio')} <span>{t('optional')}</span></label><input id="original-folio" inputMode="numeric" value={refundForm.originalFolio} onChange={(event) => setRefundForm((current) => ({ ...current, originalFolio: event.target.value }))} /></div></div>}
+      {pointVoucher ? <div className="point-document-state refund-document-state"><ReceiptText size={16} /><div><strong>{t('pointVoucherRefund')}</strong><span>{t('pointVoucherRefundDescription')}</span></div></div> : <label className="switch-field refund-switch"><input type="checkbox" checked={refundForm.creditNoteRequired} onChange={(event) => setRefundForm((current) => ({ ...current, creditNoteRequired: event.target.checked }))} /><i aria-hidden="true" /><span><strong>{t('electronicReceiptIssued')}</strong><small>{t('electronicReceiptDescription')}</small></span></label>}
+      {!pointVoucher && refundForm.creditNoteRequired && <div className="form-grid credit-note-reference"><div className="field"><label htmlFor="original-document-type">{t('originalDocumentType')}</label><select id="original-document-type" value={refundForm.originalDocumentType} onChange={(event) => setRefundForm((current) => ({ ...current, originalDocumentType: event.target.value }))}><option value="39">{t('documentType39')}</option><option value="41">{t('documentType41')}</option><option value="33">{t('documentType33')}</option><option value="34">{t('documentType34')}</option></select></div><div className="field"><label htmlFor="original-folio">{t('originalFolio')} <span>{t('optional')}</span></label><input id="original-folio" inputMode="numeric" value={refundForm.originalFolio} onChange={(event) => setRefundForm((current) => ({ ...current, originalFolio: event.target.value }))} /></div></div>}
       <div className="refund-payment-hint"><AlertTriangle size={16} /><span>{sale.paymentMethod === 'card' ? t('pointRefundHint') : t('cashRefundHint')}</span></div>
       <div className="modal-actions"><button type="button" className="button secondary" onClick={() => setView('details')} disabled={busy}>{t('cancel')}</button><button className="button primary" disabled={busy || !selectedItems.length || refundAmount <= 0}>{busy ? t('processingRefund') : t('confirmRefund')}<Undo2 size={18} /></button></div>
     </form>}
@@ -550,6 +563,26 @@ function SalesCounter({ items, sales, posConfig, onRefresh, setToast }) {
     } catch (error) { setToast({ type: 'error', message: error.message }); throw error }
     finally { setBusy(false) }
   }
+  const reconcilePointSale = async () => {
+    if (!selectedSale) return null
+    setBusy(true)
+    try {
+      const next = await api.reconcilePointSale(selectedSale.id)
+      setSelectedSale(next); await onRefresh(); setToast({ type: 'success', message: t('pointSynced') })
+      return next
+    } catch (error) { setToast({ type: 'error', message: error.message }); throw error }
+    finally { setBusy(false) }
+  }
+  const resolveRefundInventory = async (refundId, restock) => {
+    if (!selectedSale) return null
+    setBusy(true)
+    try {
+      const next = await api.resolveRefundInventory(selectedSale.id, refundId, restock)
+      setSelectedSale(next); await onRefresh(); setToast({ type: 'success', message: t('inventoryReviewResolved') })
+      return next
+    } catch (error) { setToast({ type: 'error', message: error.message }); throw error }
+    finally { setBusy(false) }
+  }
   const recordCreditNote = async (refundId, input) => {
     if (!selectedSale) return null
     setBusy(true)
@@ -622,7 +655,7 @@ function SalesCounter({ items, sales, posConfig, onRefresh, setToast }) {
       </aside>
     </section>
     {checkout && <CheckoutModal checkout={checkout} posConfig={posConfig} onCash={payCash} onCard={payCard} onRetry={retry} onCancelSale={cancelSale} onClose={() => setCheckout(null)} busy={busy} />}
-    {selectedSale && <SaleDetailsModal sale={selectedSale} onClose={() => setSelectedSale(null)} onRefund={refundSale} onRetryRefund={retryRefund} onCreditNote={recordCreditNote} busy={busy} />}
+    {selectedSale && <SaleDetailsModal sale={selectedSale} onClose={() => setSelectedSale(null)} onRefund={refundSale} onRetryRefund={retryRefund} onCreditNote={recordCreditNote} onReconcilePoint={reconcilePointSale} onResolveInventory={resolveRefundInventory} busy={busy} />}
   </div>
 }
 

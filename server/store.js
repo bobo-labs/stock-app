@@ -28,6 +28,10 @@ function shortId(id) {
   return id.replaceAll('-', '').slice(0, 8).toUpperCase()
 }
 
+function saleExternalReference(id) {
+  return `VENTA-${id.replaceAll('-', '').slice(0, 12).toUpperCase()}`
+}
+
 function normalizeItem(row) {
   return {
     id: row.id,
@@ -88,7 +92,10 @@ function normalizeRefund(row, items = row.items || [], creditNote = row.creditNo
     originalDocumentType: row.original_document_type ?? row.originalDocumentType ?? '',
     originalFolio: row.original_folio ?? row.originalFolio ?? '',
     mpRefundId: row.mp_refund_id ?? row.mpRefundId ?? null,
+    mpReferenceId: row.mp_reference_id ?? row.mpReferenceId ?? null,
     mpStatus: row.mp_status ?? row.mpStatus ?? null,
+    source: row.source || 'pos',
+    inventoryReviewStatus: row.inventory_review_status ?? row.inventoryReviewStatus ?? 'resolved',
     errorDetail: row.error_detail ?? row.errorDetail ?? '',
     items: items.map((item) => ({
       lineId: item.sale_item_id ?? item.lineId,
@@ -131,6 +138,18 @@ function normalizeSale(row, items = row.items || [], refunds = row.refunds || []
     refundableTotal: Math.max(Number(row.total) - refundedTotal, 0),
     mpOrderId: row.mp_order_id ?? row.mpOrderId ?? null,
     mpPaymentId: row.mp_payment_id ?? row.mpPaymentId ?? null,
+    mpExternalReference: row.mp_external_reference ?? row.mpExternalReference ?? saleExternalReference(row.id),
+    mpOperationId: row.mp_operation_id ?? row.mpOperationId ?? null,
+    mpAuthorizationCode: row.mp_authorization_code ?? row.mpAuthorizationCode ?? '',
+    mpCardBrand: row.mp_card_brand ?? row.mpCardBrand ?? '',
+    mpCardLastFour: row.mp_card_last_four ?? row.mpCardLastFour ?? '',
+    mpPaymentType: row.mp_payment_type ?? row.mpPaymentType ?? '',
+    mpFeeAmount: Number(row.mp_fee_amount ?? row.mpFeeAmount ?? 0),
+    mpNetReceivedAmount: row.mp_net_received_amount == null && row.mpNetReceivedAmount == null
+      ? null : Number(row.mp_net_received_amount ?? row.mpNetReceivedAmount),
+    mpTerminalSerial: row.mp_terminal_serial ?? row.mpTerminalSerial ?? '',
+    mpTaxSetting: row.mp_tax_setting ?? row.mpTaxSetting ?? '',
+    mpReconciledAt: row.mp_reconciled_at ?? row.mpReconciledAt ?? null,
     mpStatus: row.mp_status ?? row.mpStatus ?? null,
     mpStatusDetail: row.mp_status_detail ?? row.mpStatusDetail ?? null,
     inventoryApplied: Boolean(row.inventory_applied ?? row.inventoryApplied),
@@ -170,10 +189,14 @@ function ensureFileShape(data) {
   }
   for (const sale of data.sales) {
     sale.refunds ||= []
+    sale.mpExternalReference ||= saleExternalReference(sale.id)
+    sale.mpFeeAmount = Number(sale.mpFeeAmount || 0)
     for (const line of sale.items || []) line.lineId ||= crypto.randomUUID()
     for (const refund of sale.refunds) {
       refund.items ||= []
       refund.creditNote ||= null
+      refund.source ||= 'pos'
+      refund.inventoryReviewStatus ||= 'resolved'
     }
   }
   return data
@@ -210,6 +233,17 @@ export async function initializeStore() {
         mp_payment_id TEXT,
         mp_status TEXT,
         mp_status_detail TEXT,
+        mp_external_reference TEXT UNIQUE,
+        mp_operation_id TEXT,
+        mp_authorization_code TEXT NOT NULL DEFAULT '',
+        mp_card_brand TEXT NOT NULL DEFAULT '',
+        mp_card_last_four TEXT NOT NULL DEFAULT '',
+        mp_payment_type TEXT NOT NULL DEFAULT '',
+        mp_fee_amount NUMERIC(12,0) NOT NULL DEFAULT 0,
+        mp_net_received_amount NUMERIC(12,0),
+        mp_terminal_serial TEXT NOT NULL DEFAULT '',
+        mp_tax_setting TEXT NOT NULL DEFAULT '',
+        mp_reconciled_at TIMESTAMPTZ,
         inventory_applied BOOLEAN NOT NULL DEFAULT FALSE,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -236,7 +270,10 @@ export async function initializeStore() {
         original_document_type TEXT NOT NULL DEFAULT '',
         original_folio TEXT NOT NULL DEFAULT '',
         mp_refund_id TEXT UNIQUE,
+        mp_reference_id TEXT,
         mp_status TEXT,
+        source TEXT NOT NULL DEFAULT 'pos',
+        inventory_review_status TEXT NOT NULL DEFAULT 'resolved',
         error_detail TEXT NOT NULL DEFAULT '',
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -296,6 +333,22 @@ export async function initializeStore() {
         closed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
       ALTER TABLE movements ADD COLUMN IF NOT EXISTS sale_id UUID REFERENCES sales(id) ON DELETE SET NULL;
+      ALTER TABLE sales ADD COLUMN IF NOT EXISTS mp_external_reference TEXT;
+      ALTER TABLE sales ADD COLUMN IF NOT EXISTS mp_operation_id TEXT;
+      ALTER TABLE sales ADD COLUMN IF NOT EXISTS mp_authorization_code TEXT NOT NULL DEFAULT '';
+      ALTER TABLE sales ADD COLUMN IF NOT EXISTS mp_card_brand TEXT NOT NULL DEFAULT '';
+      ALTER TABLE sales ADD COLUMN IF NOT EXISTS mp_card_last_four TEXT NOT NULL DEFAULT '';
+      ALTER TABLE sales ADD COLUMN IF NOT EXISTS mp_payment_type TEXT NOT NULL DEFAULT '';
+      ALTER TABLE sales ADD COLUMN IF NOT EXISTS mp_fee_amount NUMERIC(12,0) NOT NULL DEFAULT 0;
+      ALTER TABLE sales ADD COLUMN IF NOT EXISTS mp_net_received_amount NUMERIC(12,0);
+      ALTER TABLE sales ADD COLUMN IF NOT EXISTS mp_terminal_serial TEXT NOT NULL DEFAULT '';
+      ALTER TABLE sales ADD COLUMN IF NOT EXISTS mp_tax_setting TEXT NOT NULL DEFAULT '';
+      ALTER TABLE sales ADD COLUMN IF NOT EXISTS mp_reconciled_at TIMESTAMPTZ;
+      ALTER TABLE refunds ADD COLUMN IF NOT EXISTS mp_reference_id TEXT;
+      ALTER TABLE refunds ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'pos';
+      ALTER TABLE refunds ADD COLUMN IF NOT EXISTS inventory_review_status TEXT NOT NULL DEFAULT 'resolved';
+      UPDATE sales SET mp_external_reference=CONCAT('VENTA-', UPPER(LEFT(REPLACE(id::text, '-', ''), 12))) WHERE mp_external_reference IS NULL;
+      CREATE UNIQUE INDEX IF NOT EXISTS sales_mp_external_reference_idx ON sales(mp_external_reference);
       ALTER TABLE sale_items ALTER COLUMN item_id DROP NOT NULL;
       ALTER TABLE movements ALTER COLUMN item_id DROP NOT NULL;
       DO $$
@@ -556,6 +609,17 @@ function reserveSaleInFile(data, requested, paymentMethod) {
     refunds: [],
     mpOrderId: null,
     mpPaymentId: null,
+    mpExternalReference: saleExternalReference(id),
+    mpOperationId: null,
+    mpAuthorizationCode: '',
+    mpCardBrand: '',
+    mpCardLastFour: '',
+    mpPaymentType: '',
+    mpFeeAmount: 0,
+    mpNetReceivedAmount: null,
+    mpTerminalSerial: '',
+    mpTaxSetting: '',
+    mpReconciledAt: null,
     mpStatus: null,
     mpStatusDetail: null,
     inventoryApplied: true,
@@ -591,9 +655,9 @@ export async function createSale(requested, paymentMethod) {
     const total = lines.reduce((sum, line) => sum + line.lineTotal, 0)
     const status = paymentMethod === 'cash' ? 'paid' : 'pending'
     const saleResult = await client.query(
-      `INSERT INTO sales (id, status, payment_method, total, inventory_applied, paid_at)
-       VALUES ($1,$2,$3,$4,TRUE,CASE WHEN $2='paid' THEN NOW() ELSE NULL END) RETURNING *`,
-      [id, status, paymentMethod, total],
+      `INSERT INTO sales (id, status, payment_method, total, mp_external_reference, inventory_applied, paid_at)
+       VALUES ($1,$2,$3,$4,$5,TRUE,CASE WHEN $2='paid' THEN NOW() ELSE NULL END) RETURNING *`,
+      [id, status, paymentMethod, total, saleExternalReference(id)],
     )
     const persistedLines = lines.map((line) => ({ ...line, lineId: crypto.randomUUID() }))
     await client.query(
@@ -662,6 +726,7 @@ export async function attachPointOrder(saleId, order, knownSale = null) {
       if (!sale) return null
       sale.mpOrderId = order.id
       sale.mpPaymentId = payment?.id || null
+      sale.mpExternalReference = order.external_reference || sale.mpExternalReference || saleExternalReference(sale.id)
       sale.mpStatus = order.status || null
       sale.mpStatusDetail = order.status_detail || null
       sale.updatedAt = new Date().toISOString()
@@ -669,9 +734,10 @@ export async function attachPointOrder(saleId, order, knownSale = null) {
     })
   }
   const { rows } = await pool.query(
-    `UPDATE sales SET mp_order_id=$2, mp_payment_id=$3, mp_status=$4, mp_status_detail=$5, updated_at=NOW()
+    `UPDATE sales SET mp_order_id=$2, mp_payment_id=$3, mp_status=$4, mp_status_detail=$5,
+     mp_external_reference=COALESCE($6,mp_external_reference), updated_at=NOW()
      WHERE id=$1 RETURNING *`,
-    [saleId, order.id, payment?.id || null, order.status || null, order.status_detail || null],
+    [saleId, order.id, payment?.id || null, order.status || null, order.status_detail || null, order.external_reference || null],
   )
   if (rows[0] && knownSale) return normalizeSale(rows[0], knownSale.items, knownSale.refunds)
   return rows[0] ? getSale(rows[0].id) : null
@@ -718,30 +784,134 @@ export async function markCardSaleFailed(saleId, detail = 'order_creation_failed
   return updatePostgresSaleStatus(saleId, 'failed', 'failed', detail)
 }
 
+function processedPointRefunds(order) {
+  return (order?.transactions?.refunds || []).filter((refund) => refund?.id && refund.status === 'processed')
+}
+
+function remainingRefundLines(sale) {
+  const refundedByLine = new Map()
+  for (const refund of sale.refunds.filter((entry) => entry.status === 'processed')) {
+    for (const line of refund.items) refundedByLine.set(line.lineId, (refundedByLine.get(line.lineId) || 0) + line.quantity)
+  }
+  return sale.items.map((line) => {
+    const quantity = Math.max(0, Number(line.quantity) - Number(refundedByLine.get(line.lineId) || 0))
+    return { ...line, quantity, lineTotal: Math.round(Number(line.unitPrice) * quantity), restocked: false }
+  }).filter((line) => line.quantity > 0)
+}
+
+function ingestFilePointRefunds(sale, order) {
+  const now = new Date().toISOString()
+  for (const pointRefund of processedPointRefunds(order)) {
+    if (sale.refunds.some((refund) => refund.mpRefundId === pointRefund.id)) continue
+    const amount = Math.round(Number(pointRefund.amount || 0))
+    if (amount <= 0) continue
+    if (sale.refunds.some((refund) => refund.status === 'pending' && !refund.mpRefundId && Number(refund.amount) === amount)) continue
+    const refundedTotal = sale.refunds.filter((refund) => refund.status === 'processed').reduce((sum, refund) => sum + Number(refund.amount), 0)
+    const full = amount >= Math.max(Number(sale.total) - refundedTotal, 0)
+    const candidateItems = full ? remainingRefundLines(normalizeSale(sale)) : []
+    const itemsMatchAmount = candidateItems.reduce((sum, line) => sum + line.lineTotal, 0) === amount
+    sale.refunds.unshift({
+      id: crypto.randomUUID(), saleId: sale.id, status: 'processed', amount,
+      reason: 'Mercado Pago / Point', restock: false, creditNoteRequired: false,
+      originalDocumentType: '', originalFolio: '', mpRefundId: pointRefund.id,
+      mpReferenceId: pointRefund.reference_id || null, mpStatus: pointRefund.status,
+      source: 'point_terminal', inventoryReviewStatus: 'pending', errorDetail: '',
+      items: itemsMatchAmount ? candidateItems : [], creditNote: null,
+      createdAt: pointRefund.date_created || now, updatedAt: now, processedAt: pointRefund.date_created || now,
+    })
+  }
+}
+
+async function ingestPostgresPointRefunds(client, sale, order) {
+  const pointRefunds = processedPointRefunds(order)
+  if (!pointRefunds.length) return
+  const existingResult = await client.query('SELECT * FROM refunds WHERE sale_id=$1 ORDER BY created_at FOR UPDATE', [sale.id])
+  for (const pointRefund of pointRefunds) {
+    if (existingResult.rows.some((refund) => refund.mp_refund_id === pointRefund.id)) continue
+    const amount = Math.round(Number(pointRefund.amount || 0))
+    if (amount <= 0) continue
+    if (existingResult.rows.some((refund) => refund.status === 'pending' && !refund.mp_refund_id && Number(refund.amount) === amount)) continue
+
+    const refundedTotal = existingResult.rows
+      .filter((refund) => refund.status === 'processed')
+      .reduce((sum, refund) => sum + Number(refund.amount), 0)
+    const full = amount >= Math.max(Number(sale.total) - refundedTotal, 0)
+    const refundId = crypto.randomUUID()
+    await client.query(
+      `INSERT INTO refunds (
+        id, sale_id, status, amount, reason, restock, credit_note_required,
+        mp_refund_id, mp_reference_id, mp_status, source, inventory_review_status,
+        created_at, updated_at, processed_at
+      ) VALUES ($1,$2,'processed',$3,'Mercado Pago / Point',FALSE,FALSE,$4,$5,$6,'point_terminal','pending',
+        COALESCE($7::timestamptz,NOW()),NOW(),COALESCE($7::timestamptz,NOW()))`,
+      [refundId, sale.id, amount, pointRefund.id, pointRefund.reference_id || null, pointRefund.status, pointRefund.date_created || null],
+    )
+    const inserted = { id: refundId, status: 'processed', amount, mp_refund_id: pointRefund.id }
+    existingResult.rows.push(inserted)
+    if (!full) continue
+
+    const lineResult = await client.query(
+      `SELECT si.*, GREATEST(si.quantity-COALESCE(SUM(CASE WHEN r.status='processed' THEN ri.quantity ELSE 0 END),0),0) AS remaining_quantity
+       FROM sale_items si
+       LEFT JOIN refund_items ri ON ri.sale_item_id=si.id
+       LEFT JOIN refunds r ON r.id=ri.refund_id
+       WHERE si.sale_id=$1
+       GROUP BY si.id
+       ORDER BY si.item_name`,
+      [sale.id],
+    )
+    const remainingLines = lineResult.rows.filter((entry) => Number(entry.remaining_quantity) > 0)
+    const remainingLinesTotal = remainingLines.reduce(
+      (sum, line) => sum + Math.round(Number(line.unit_price) * Number(line.remaining_quantity)),
+      0,
+    )
+    if (remainingLinesTotal !== amount) continue
+    for (const line of remainingLines) {
+      await client.query(
+        `INSERT INTO refund_items (
+          id, refund_id, sale_item_id, item_id, item_name, quantity, unit_price, line_total, restocked
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,FALSE)`,
+        [crypto.randomUUID(), refundId, line.id, line.item_id, line.item_name, line.remaining_quantity,
+          line.unit_price, Math.round(Number(line.unit_price) * Number(line.remaining_quantity))],
+      )
+    }
+  }
+}
+
 export async function updateSaleFromPoint(order) {
   const status = localStatusForPoint(order)
   const payment = order?.transactions?.payments?.[0]
   if (!pool) return mutateFileData((data) => {
-    const sale = data.sales.find((entry) => entry.mpOrderId === order.id || `sale-${entry.id}` === order.external_reference)
+    const sale = data.sales.find((entry) => entry.mpOrderId === order.id
+      || entry.mpExternalReference === order.external_reference
+      || `sale-${entry.id}` === order.external_reference)
     if (!sale) return null
     sale.mpOrderId = order.id || sale.mpOrderId
     sale.mpPaymentId = payment?.id || sale.mpPaymentId
-    const result = restoreFileSale(data, sale, status, order.status_detail)
+    sale.mpExternalReference = order.external_reference || sale.mpExternalReference || saleExternalReference(sale.id)
+    sale.mpOperationId = payment?.reference_id || sale.mpOperationId || null
+    restoreFileSale(data, sale, status, order.status_detail)
+    ingestFilePointRefunds(sale, order)
     sale.mpStatus = order.status
     sale.mpStatusDetail = order.status_detail
     if (status === 'paid' && !sale.paidAt) sale.paidAt = new Date().toISOString()
-    return result
+    return normalizeSale(sale)
   })
 
   const lookup = order.id
-    ? await pool.query('SELECT id FROM sales WHERE mp_order_id=$1 OR $2 = CONCAT(\'sale-\', id::text) LIMIT 1', [order.id, order.external_reference || ''])
+    ? await pool.query(
+      `SELECT id FROM sales
+       WHERE mp_order_id=$1 OR mp_external_reference=$2 OR $2=CONCAT('sale-',id::text)
+       LIMIT 1`,
+      [order.id, order.external_reference || ''],
+    )
     : { rows: [] }
   if (!lookup.rows[0]) return null
-  const sale = await updatePostgresSaleStatus(lookup.rows[0].id, status, order.status, order.status_detail, payment?.id, order.id)
+  const sale = await updatePostgresSaleStatus(lookup.rows[0].id, status, order.status, order.status_detail, payment?.id, order.id, order)
   return sale
 }
 
-async function updatePostgresSaleStatus(saleId, status, mpStatus, mpStatusDetail, mpPaymentId = null, mpOrderId = null) {
+async function updatePostgresSaleStatus(saleId, status, mpStatus, mpStatusDetail, mpPaymentId = null, mpOrderId = null, order = null) {
   const client = await pool.connect()
   try {
     await client.query('BEGIN')
@@ -760,14 +930,23 @@ async function updatePostgresSaleStatus(saleId, status, mpStatus, mpStatusDetail
         )
       }
     }
+    await ingestPostgresPointRefunds(client, sale, { ...order, transactions: order?.transactions })
+    const refundTotalResult = await client.query(
+      `SELECT COALESCE(SUM(amount),0) AS total FROM refunds WHERE sale_id=$1 AND status='processed'`,
+      [saleId],
+    )
+    const reconciledStatus = Number(refundTotalResult.rows[0].total) >= Number(sale.total) ? 'refunded' : status
     await client.query(
       `UPDATE sales SET status=$2, mp_status=$3, mp_status_detail=$4,
        mp_payment_id=COALESCE($5, mp_payment_id),
        mp_order_id=COALESCE($6, mp_order_id),
+       mp_external_reference=COALESCE($7,mp_external_reference),
+       mp_operation_id=COALESCE($8,mp_operation_id),
        inventory_applied=CASE WHEN $2 IN ('failed','cancelled','expired') THEN FALSE ELSE inventory_applied END,
        paid_at=CASE WHEN $2='paid' THEN COALESCE(paid_at,NOW()) ELSE paid_at END, updated_at=NOW()
        WHERE id=$1`,
-      [saleId, status, mpStatus || status, mpStatusDetail || status, mpPaymentId, mpOrderId],
+      [saleId, reconciledStatus, mpStatus || status, mpStatusDetail || status, mpPaymentId, mpOrderId,
+        order?.external_reference || null, order?.transactions?.payments?.[0]?.reference_id || null],
     )
     await client.query('COMMIT')
     return getSale(saleId)
@@ -777,6 +956,63 @@ async function updatePostgresSaleStatus(saleId, status, mpStatus, mpStatusDetail
   } finally {
     client.release()
   }
+}
+
+function pointPaymentDetails(payment) {
+  const fees = Array.isArray(payment?.fee_details)
+    ? payment.fee_details.reduce((sum, fee) => sum + Number(fee.amount || 0), 0)
+    : 0
+  return {
+    operationId: payment?.id == null ? null : String(payment.id),
+    authorizationCode: String(payment?.authorization_code || ''),
+    cardBrand: String(payment?.payment_method_id || payment?.payment_method?.id || ''),
+    cardLastFour: String(payment?.card?.last_four_digits || ''),
+    paymentType: String(payment?.payment_type_id || payment?.payment_method?.type || ''),
+    feeAmount: Math.round(fees),
+    netReceivedAmount: payment?.transaction_details?.net_received_amount == null
+      ? null : Math.round(Number(payment.transaction_details.net_received_amount)),
+    terminalSerial: String(
+      payment?.point_of_interaction?.transaction_data?.terminal_id
+      || payment?.point_of_interaction?.transaction_data?.device_id
+      || payment?.additional_info?.terminal_id
+      || '',
+    ),
+    taxSetting: String(payment?.additional_info?.tax_setting || ''),
+  }
+}
+
+export async function updateSalePaymentDetails(saleId, payment) {
+  const details = pointPaymentDetails(payment)
+  if (!pool) return mutateFileData((data) => {
+    const sale = data.sales.find((entry) => entry.id === saleId)
+    if (!sale) return null
+    Object.assign(sale, {
+      mpOperationId: details.operationId || sale.mpOperationId || null,
+      mpAuthorizationCode: details.authorizationCode,
+      mpCardBrand: details.cardBrand,
+      mpCardLastFour: details.cardLastFour,
+      mpPaymentType: details.paymentType,
+      mpFeeAmount: details.feeAmount,
+      mpNetReceivedAmount: details.netReceivedAmount,
+      mpTerminalSerial: details.terminalSerial,
+      mpTaxSetting: details.taxSetting,
+      mpReconciledAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    })
+    return normalizeSale(sale)
+  })
+
+  const { rows } = await pool.query(
+    `UPDATE sales SET
+      mp_operation_id=COALESCE($2,mp_operation_id), mp_authorization_code=$3,
+      mp_card_brand=$4, mp_card_last_four=$5, mp_payment_type=$6,
+      mp_fee_amount=$7, mp_net_received_amount=$8, mp_terminal_serial=$9,
+      mp_tax_setting=$10, mp_reconciled_at=NOW(), updated_at=NOW()
+     WHERE id=$1 RETURNING id`,
+    [saleId, details.operationId, details.authorizationCode, details.cardBrand, details.cardLastFour,
+      details.paymentType, details.feeAmount, details.netReceivedAmount, details.terminalSerial, details.taxSetting],
+  )
+  return rows[0] ? getSale(saleId) : null
 }
 
 function refundConflict(message) {
@@ -1006,6 +1242,85 @@ export async function completeRefund(refundId, order = null) {
     )
     await client.query('COMMIT')
     return getSale(refund.sale_id)
+  } catch (error) {
+    await client.query('ROLLBACK')
+    throw error
+  } finally {
+    client.release()
+  }
+}
+
+export async function resolveRefundInventoryReview(saleId, refundId, restock) {
+  if (!pool) return mutateFileData((data) => {
+    const sale = data.sales.find((entry) => entry.id === saleId)
+    const refund = sale?.refunds.find((entry) => entry.id === refundId)
+    if (!refund) return null
+    if (refund.inventoryReviewStatus === 'resolved') return normalizeSale(sale)
+    if (refund.status !== 'processed' || refund.source !== 'point_terminal') {
+      throw refundConflict('This refund does not have a pending inventory review.')
+    }
+    if (restock && !refund.items.length) throw refundConflict('Select the returned products manually for a partial Point refund.')
+    const now = new Date().toISOString()
+    if (restock) {
+      for (const line of refund.items) {
+        if (line.restocked) continue
+        const item = data.items.find((entry) => entry.id === line.itemId)
+        if (!item) continue
+        item.quantity = Number(item.quantity) + Number(line.quantity)
+        item.updatedAt = now
+        line.restocked = true
+        data.movements.unshift({
+          id: crypto.randomUUID(), itemId: item.id, itemName: item.name, saleId, type: 'stock_in',
+          quantity: Number(line.quantity), balanceAfter: item.quantity,
+          note: `Point refund #${shortId(refund.id)} — stock restored`, createdAt: now,
+        })
+      }
+    }
+    refund.restock = Boolean(restock)
+    refund.inventoryReviewStatus = 'resolved'
+    refund.updatedAt = now
+    sale.updatedAt = now
+    return normalizeSale(sale)
+  })
+
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    const refundResult = await client.query(
+      `SELECT * FROM refunds WHERE id=$1 AND sale_id=$2 FOR UPDATE`,
+      [refundId, saleId],
+    )
+    const refund = refundResult.rows[0]
+    if (!refund) { await client.query('ROLLBACK'); return null }
+    if (refund.inventory_review_status === 'resolved') { await client.query('COMMIT'); return getSale(saleId) }
+    if (refund.status !== 'processed' || refund.source !== 'point_terminal') {
+      throw refundConflict('This refund does not have a pending inventory review.')
+    }
+    const itemResult = await client.query('SELECT * FROM refund_items WHERE refund_id=$1 ORDER BY item_name FOR UPDATE', [refundId])
+    if (restock && !itemResult.rows.length) throw refundConflict('Select the returned products manually for a partial Point refund.')
+    if (restock) {
+      for (const line of itemResult.rows) {
+        if (line.restocked || !line.item_id) continue
+        const updated = await client.query(
+          'UPDATE items SET quantity=quantity+$2,updated_at=NOW() WHERE id=$1 RETURNING quantity',
+          [line.item_id, line.quantity],
+        )
+        if (!updated.rows[0]) continue
+        await client.query('UPDATE refund_items SET restocked=TRUE WHERE id=$1', [line.id])
+        await client.query(
+          `INSERT INTO movements (id,item_id,item_name,type,quantity,balance_after,note,sale_id)
+           VALUES ($1,$2,$3,'stock_in',$4,$5,$6,$7)`,
+          [crypto.randomUUID(), line.item_id, line.item_name, line.quantity, updated.rows[0].quantity,
+            `Point refund #${shortId(refundId)} — stock restored`, saleId],
+        )
+      }
+    }
+    await client.query(
+      `UPDATE refunds SET restock=$2,inventory_review_status='resolved',updated_at=NOW() WHERE id=$1`,
+      [refundId, Boolean(restock)],
+    )
+    await client.query('COMMIT')
+    return getSale(saleId)
   } catch (error) {
     await client.query('ROLLBACK')
     throw error
