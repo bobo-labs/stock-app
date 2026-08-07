@@ -596,23 +596,51 @@ export async function createSale(requested, paymentMethod) {
       [id, status, paymentMethod, total],
     )
     const persistedLines = lines.map((line) => ({ ...line, lineId: crypto.randomUUID() }))
-    for (const line of persistedLines) {
-      await client.query(
-        `INSERT INTO sale_items (id, sale_id, item_id, item_name, unit, quantity, unit_price, line_total)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-        [line.lineId, id, line.item.id, line.item.name, line.item.unit, line.quantity, line.unitPrice, line.lineTotal],
-      )
-      const updated = await client.query(
-        'UPDATE items SET quantity=quantity-$2, updated_at=NOW() WHERE id=$1 RETURNING quantity',
-        [line.item.id, line.quantity],
-      )
-      await client.query(
-        `INSERT INTO movements (id, item_id, item_name, type, quantity, balance_after, note, sale_id)
-         VALUES ($1,$2,$3,'stock_out',$4,$5,$6,$7)`,
-        [crypto.randomUUID(), line.item.id, line.item.name, -line.quantity, updated.rows[0].quantity,
-          paymentMethod === 'cash' ? `Sale #${shortId(id)}` : `Reserved for card sale #${shortId(id)}`, id],
-      )
-    }
+    await client.query(
+      `INSERT INTO sale_items (id, sale_id, item_id, item_name, unit, quantity, unit_price, line_total)
+       SELECT * FROM UNNEST(
+         $1::uuid[], $2::uuid[], $3::uuid[], $4::text[], $5::text[], $6::numeric[], $7::numeric[], $8::numeric[]
+       )`,
+      [
+        persistedLines.map((line) => line.lineId),
+        persistedLines.map(() => id),
+        persistedLines.map((line) => line.item.id),
+        persistedLines.map((line) => line.item.name),
+        persistedLines.map((line) => line.item.unit),
+        persistedLines.map((line) => line.quantity),
+        persistedLines.map((line) => line.unitPrice),
+        persistedLines.map((line) => line.lineTotal),
+      ],
+    )
+    const updatedItems = await client.query(
+      `WITH requested(item_id, quantity) AS (
+         SELECT * FROM UNNEST($1::uuid[], $2::numeric[])
+       )
+       UPDATE items AS item
+       SET quantity=item.quantity-requested.quantity, updated_at=NOW()
+       FROM requested
+       WHERE item.id=requested.item_id
+       RETURNING item.id, item.quantity`,
+      [persistedLines.map((line) => line.item.id), persistedLines.map((line) => line.quantity)],
+    )
+    const balances = new Map(updatedItems.rows.map((item) => [item.id, item.quantity]))
+    const movementNote = paymentMethod === 'cash' ? `Sale #${shortId(id)}` : `Reserved for card sale #${shortId(id)}`
+    await client.query(
+      `INSERT INTO movements (id, item_id, item_name, type, quantity, balance_after, note, sale_id)
+       SELECT movement_id, item_id, item_name, 'stock_out', quantity, balance_after, note, sale_id
+       FROM UNNEST(
+         $1::uuid[], $2::uuid[], $3::text[], $4::numeric[], $5::numeric[], $6::text[], $7::uuid[]
+       ) AS batch(movement_id, item_id, item_name, quantity, balance_after, note, sale_id)`,
+      [
+        persistedLines.map(() => crypto.randomUUID()),
+        persistedLines.map((line) => line.item.id),
+        persistedLines.map((line) => line.item.name),
+        persistedLines.map((line) => -line.quantity),
+        persistedLines.map((line) => balances.get(line.item.id)),
+        persistedLines.map(() => movementNote),
+        persistedLines.map(() => id),
+      ],
+    )
     await client.query('COMMIT')
     return normalizeSale(saleResult.rows[0], persistedLines.map((line) => ({
       id: line.lineId, item_id: line.item.id, item_name: line.item.name, unit: line.item.unit,
@@ -626,7 +654,7 @@ export async function createSale(requested, paymentMethod) {
   }
 }
 
-export async function attachPointOrder(saleId, order) {
+export async function attachPointOrder(saleId, order, knownSale = null) {
   const payment = order?.transactions?.payments?.[0]
   if (!pool) {
     return mutateFileData((data) => {
@@ -645,6 +673,7 @@ export async function attachPointOrder(saleId, order) {
      WHERE id=$1 RETURNING *`,
     [saleId, order.id, payment?.id || null, order.status || null, order.status_detail || null],
   )
+  if (rows[0] && knownSale) return normalizeSale(rows[0], knownSale.items, knownSale.refunds)
   return rows[0] ? getSale(rows[0].id) : null
 }
 

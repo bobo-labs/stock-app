@@ -1,3 +1,4 @@
+import crypto from 'node:crypto'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import compression from 'compression'
@@ -136,6 +137,27 @@ function requireProtectedPoint() {
   }
 }
 
+function elapsedMilliseconds(startedAt) {
+  return Math.round((performance.now() - startedAt) * 10) / 10
+}
+
+function sendPointTiming(res, requestId, timings) {
+  res.setHeader('X-Request-ID', requestId)
+  res.setHeader('Server-Timing', Object.entries(timings)
+    .map(([name, duration]) => `${name};dur=${duration}`)
+    .join(', '))
+}
+
+function logPointTiming(requestId, sale, outcome, timings) {
+  console.info(JSON.stringify({
+    event: 'point_order_timing',
+    requestId,
+    saleId: sale?.id || null,
+    outcome,
+    timings,
+  }))
+}
+
 app.get('/api/health', (_req, res) => res.json({ ok: true }))
 
 app.post('/api/mercadopago/webhook', (req, res) => {
@@ -149,11 +171,22 @@ app.post('/api/mercadopago/webhook', (req, res) => {
   res.status(200).end()
 
   setImmediate(async () => {
+    const startedAt = performance.now()
     try {
       const sale = await getSaleByPointOrder(dataId)
       if (!sale && pointConfiguration().mockMode) return
       const order = await getPointOrder(dataId, sale)
-      await updateSaleFromPoint(order)
+      const updatedSale = await updateSaleFromPoint(order)
+      console.info(JSON.stringify({
+        event: 'point_webhook_status',
+        requestId: req.headers['x-request-id'] || null,
+        saleId: updatedSale?.id || sale?.id || null,
+        from: sale?.mpStatus || null,
+        to: updatedSale?.mpStatus || order.status || null,
+        status: updatedSale?.status || null,
+        ageMs: updatedSale ? Date.now() - new Date(updatedSale.createdAt).getTime() : null,
+        totalMs: elapsedMilliseconds(startedAt),
+      }))
     } catch (error) {
       console.error('Mercado Pago webhook processing failed:', error)
     }
@@ -231,30 +264,62 @@ app.post('/api/sales/cash', async (req, res, next) => {
 })
 app.post('/api/sales/card', async (req, res, next) => {
   let sale
+  const requestId = crypto.randomUUID()
+  const requestStartedAt = performance.now()
+  const timings = {}
   try {
     requireProtectedPoint()
+    const reserveStartedAt = performance.now()
     sale = await createSale(cleanCart(req.body), 'card')
+    timings.reserve = elapsedMilliseconds(reserveStartedAt)
+    const mercadoPagoStartedAt = performance.now()
     const order = await createPointOrder(sale)
-    res.status(201).json(await attachPointOrder(sale.id, order))
+    timings.mercadopago = elapsedMilliseconds(mercadoPagoStartedAt)
+    const persistStartedAt = performance.now()
+    const attachedSale = await attachPointOrder(sale.id, order, sale)
+    timings.persist = elapsedMilliseconds(persistStartedAt)
+    timings.total = elapsedMilliseconds(requestStartedAt)
+    sendPointTiming(res, requestId, timings)
+    logPointTiming(requestId, attachedSale, 'created', timings)
+    res.status(201).json({ ...attachedSale, pointTiming: timings, requestId })
   } catch (error) {
     if (sale && !error.uncertain) await markCardSaleFailed(sale.id, error.mercadoPagoCode || 'order_creation_failed').catch(console.error)
     if (sale) error.saleId = sale.id
+    timings.total = elapsedMilliseconds(requestStartedAt)
+    sendPointTiming(res, requestId, timings)
+    logPointTiming(requestId, sale, error.uncertain ? 'uncertain' : 'failed', timings)
     next(error)
   }
 })
 app.post('/api/sales/:id/retry-card', async (req, res, next) => {
   let sale
+  const requestId = crypto.randomUUID()
+  const requestStartedAt = performance.now()
+  const timings = {}
   try {
     requireProtectedPoint()
+    const lookupStartedAt = performance.now()
     sale = await getSale(req.params.id)
+    timings.lookup = elapsedMilliseconds(lookupStartedAt)
     if (!sale) return res.status(404).json({ error: 'Sale not found.' })
     if (sale.paymentMethod !== 'card' || sale.status !== 'pending') throw Object.assign(new Error('This card sale cannot be retried.'), { status: 409 })
     if (sale.mpOrderId) return res.json(sale)
+    const mercadoPagoStartedAt = performance.now()
     const order = await createPointOrder(sale)
-    res.json(await attachPointOrder(sale.id, order))
+    timings.mercadopago = elapsedMilliseconds(mercadoPagoStartedAt)
+    const persistStartedAt = performance.now()
+    const attachedSale = await attachPointOrder(sale.id, order, sale)
+    timings.persist = elapsedMilliseconds(persistStartedAt)
+    timings.total = elapsedMilliseconds(requestStartedAt)
+    sendPointTiming(res, requestId, timings)
+    logPointTiming(requestId, attachedSale, 'created_after_retry', timings)
+    res.json({ ...attachedSale, pointTiming: timings, requestId })
   } catch (error) {
     if (sale && !error.uncertain) await markCardSaleFailed(sale.id, error.mercadoPagoCode || 'order_creation_failed').catch(console.error)
     if (sale) error.saleId = sale.id
+    timings.total = elapsedMilliseconds(requestStartedAt)
+    sendPointTiming(res, requestId, timings)
+    logPointTiming(requestId, sale, error.uncertain ? 'uncertain_after_retry' : 'retry_failed', timings)
     next(error)
   }
 })
@@ -263,8 +328,38 @@ app.get('/api/sales/:id', async (req, res, next) => {
     let sale = await getSale(req.params.id)
     if (!sale) return res.status(404).json({ error: 'Sale not found.' })
     if (req.query.refresh === 'true' && sale.paymentMethod === 'card' && sale.status === 'pending' && sale.mpOrderId) {
+      const previousPointStatus = sale.mpStatus
+      const refreshStartedAt = performance.now()
+      const mercadoPagoStartedAt = performance.now()
       const order = await getPointOrder(sale.mpOrderId, sale)
-      sale = await updateSaleFromPoint(order)
+      const mercadoPagoDuration = elapsedMilliseconds(mercadoPagoStartedAt)
+      const paymentId = order?.transactions?.payments?.[0]?.id || null
+      const pointStateChanged = order.status !== sale.mpStatus
+        || order.status_detail !== sale.mpStatusDetail
+        || (paymentId && paymentId !== sale.mpPaymentId)
+      let persistDuration = 0
+      if (pointStateChanged) {
+        const persistStartedAt = performance.now()
+        sale = await updateSaleFromPoint(order)
+        persistDuration = elapsedMilliseconds(persistStartedAt)
+      }
+      const timings = {
+        mercadopago: mercadoPagoDuration,
+        persist: persistDuration,
+        total: elapsedMilliseconds(refreshStartedAt),
+      }
+      sendPointTiming(res, crypto.randomUUID(), timings)
+      if (sale.mpStatus !== previousPointStatus || sale.status !== 'pending') {
+        console.info(JSON.stringify({
+          event: 'point_order_status',
+          saleId: sale.id,
+          from: previousPointStatus,
+          to: sale.mpStatus,
+          status: sale.status,
+          ageMs: Date.now() - new Date(sale.createdAt).getTime(),
+          timings,
+        }))
+      }
     }
     res.json(sale)
   } catch (error) { next(error) }

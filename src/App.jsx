@@ -318,6 +318,14 @@ function CheckoutModal({ checkout, posConfig, onCash, onCard, onRetry, onCancelS
   const sale = checkout.sale
   const pending = checkout.stage === 'processing' || checkout.stage === 'connecting'
   const finalState = sale ? saleState(sale.status, t) : null
+  const pointHasOrder = checkout.stage === 'processing' && sale?.mpStatus
+  const pointHasTerminal = pointHasOrder && ['at_terminal', 'action_required'].includes(sale.mpStatus)
+  const progressTitle = checkout.stage === 'connecting'
+    ? t('sendingToPoint')
+    : pointHasTerminal ? t('pointReady') : t('waitingForPoint')
+  const progressDescription = checkout.stage === 'connecting'
+    ? t('connectingPointDescription')
+    : pointHasTerminal ? t('customerUseTerminal') : t('waitingForPointDescription')
   return <Modal title={checkout.stage === 'method' ? t('choosePaymentMethod') : sale ? `#${sale.shortId}` : t('cardPayment')} eyebrow={t('checkout')} onClose={onClose} closeable={!pending}>
     {checkout.stage === 'method' && <div className="checkout-body">
       <div className="checkout-total"><span>{t('totalToPay')}</span><strong>{formatCurrency(checkout.total)}</strong></div>
@@ -329,8 +337,8 @@ function CheckoutModal({ checkout, posConfig, onCash, onCard, onRetry, onCancelS
     </div>}
     {(checkout.stage === 'connecting' || checkout.stage === 'processing') && <div className="payment-progress">
       <div className="terminal-animation"><CreditCard size={31} /><i /><i /><i /></div>
-      <h3>{checkout.stage === 'connecting' ? t('sendingToPoint') : t('followPointInstructions')}</h3>
-      <p>{checkout.stage === 'connecting' ? t('connectingPointDescription') : t('customerUseTerminal')}</p>
+      <h3>{progressTitle}</h3>
+      <p>{progressDescription}</p>
       {sale && <div className="payment-reference"><span>{t('sale')}</span><strong>#{sale.shortId}</strong><span>{formatCurrency(sale.total)}</span></div>}
       <div className="progress-line"><i /></div>
       {sale?.mpStatus === 'action_required' && <div className="setup-hint"><AlertTriangle size={17} />{t('checkTerminal')}</div>}
@@ -556,19 +564,35 @@ function SalesCounter({ items, sales, posConfig, onRefresh, setToast }) {
   useEffect(() => {
     if (checkout?.stage !== 'processing' || !checkout.sale?.id) return undefined
     let active = true
+    let timeoutId
+    let errorNotified = false
+    const startedAt = Date.now()
+    const schedule = () => {
+      if (!active) return
+      const elapsed = Date.now() - startedAt
+      timeoutId = setTimeout(poll, elapsed < 12000 ? 1000 : 2500)
+    }
     const poll = async () => {
       try {
         const sale = await api.sale(checkout.sale.id, true)
         if (!active) return
         setCheckout((current) => ({ ...current, sale }))
-        if (sale.status !== 'pending') await finish(sale)
+        if (sale.status !== 'pending') {
+          active = false
+          await finish(sale)
+          return
+        }
+        schedule()
       } catch (error) {
-        if (active) setToast({ type: 'error', message: error.message })
+        if (active && !errorNotified) {
+          errorNotified = true
+          setToast({ type: 'error', message: error.message })
+        }
+        schedule()
       }
     }
-    const id = setInterval(poll, 2500)
     poll()
-    return () => { active = false; clearInterval(id) }
+    return () => { active = false; clearTimeout(timeoutId) }
   }, [checkout?.stage, checkout?.sale?.id])
   useEffect(() => {
     setSelectedSale((current) => current ? sales.find((sale) => sale.id === current.id) || current : null)

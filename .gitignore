@@ -10,5 +10,6 @@ npm-debug.log*
 # Local generated artifacts
 tmp/
 output/
+.backups/
 **/__pycache__/
 *.py[cod]
