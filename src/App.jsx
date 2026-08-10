@@ -232,7 +232,7 @@ function AdjustForm({ item, initialType = 'stock_in', onSubmit, onClose, busy })
   const [note, setNote] = useState('')
   const newBalance = type === 'adjustment' ? Number(quantity || item.quantity) : Math.max(0, item.quantity + (type === 'stock_in' ? 1 : -1) * Number(quantity || 0))
   return <form onSubmit={(event) => { event.preventDefault(); onSubmit({ type, quantity, note }) }} className="form-stack">
-    <div className="current-balance"><div className="product-glyph"><Croissant size={22} /></div><div><span>{t('currentBalance')}</span><strong>{formatQuantity(item.quantity)} {unitLabel(item.unit)}</strong></div></div>
+    <div className="current-balance"><div className={`product-glyph category-${categoryClass(item.category)}`}><CategoryIcon category={item.category} size={22} /></div><div><span>{t('currentBalance')}</span><strong>{formatQuantity(item.quantity)} {unitLabel(item.unit)}</strong></div></div>
     <div className="segmented" aria-label={t('stockAction')}>
       <button type="button" className={type === 'stock_in' ? 'active' : ''} onClick={() => setType('stock_in')}><Plus size={17} /> {t('stockIn')}</button>
       <button type="button" className={type === 'stock_out' ? 'active' : ''} onClick={() => setType('stock_out')}><Minus size={17} /> {t('stockOut')}</button>
@@ -258,7 +258,7 @@ function InventoryList({ items, onAdjust, onEdit }) {
       const state = stockState(item, t); const expiry = daysUntil(item.expiryDate)
       const details = [categoryLabel(item.category), item.sku, item.sellable && item.price > 0 ? formatCurrency(item.price) : t('notForSale')].filter(Boolean).join(' · ')
       return <article className="inventory-row" key={item.id}>
-        <div className="product-cell"><div className={`product-glyph category-${item.category.toLowerCase()}`}><Croissant size={20} /></div><div><strong>{item.name}</strong><span>{details}</span></div></div>
+        <div className="product-cell"><div className={`product-glyph category-${categoryClass(item.category)}`}><CategoryIcon category={item.category} size={20} /></div><div><strong>{item.name}</strong><span>{details}</span></div></div>
         <div className="quantity-cell"><strong>{formatQuantity(item.quantity)}</strong><span>{unitLabel(item.unit)}</span></div>
         <div><span className={`status ${state.tone}`}><i />{state.label}</span></div>
         <div className={`expiry-cell ${expiry !== null && expiry <= 2 ? 'urgent' : ''}`}>{item.expiryDate ? <><CalendarClock size={16} /><span>{expiry < 0 ? t('expired') : expiry === 0 ? t('todayExpiry') : formatDate(item.expiryDate)}</span></> : <span>—</span>}</div>
@@ -289,7 +289,7 @@ function Dashboard({ items, movements, sales, onAdd, onAdjust, onGoInventory, on
     </section>
     <section className="dashboard-grid">
       <div className="card stock-card"><header className="card-header"><div><span className="eyebrow">{t('inventoryHealth')}</span><h2>{t('stockRequiringAttention')}</h2></div><button className="text-button" onClick={onGoInventory}>{t('viewAll')} <ChevronRight size={17} /></button></header>
-        {lowItems.length ? <div className="attention-list">{lowItems.slice(0, 5).map((item) => <button key={item.id} onClick={() => onAdjust(item)}><div className="product-glyph"><Croissant size={19} /></div><div className="attention-copy"><strong>{item.name}</strong><span>{categoryLabel(item.category)} · {t('minimum')} {formatQuantity(item.lowStockThreshold)}</span></div><div className="attention-count"><strong>{formatQuantity(item.quantity)}</strong><span>{unitLabel(item.unit)}</span></div><ChevronRight size={18} /></button>)}</div> : <div className="all-good"><div><Sparkles size={24} /></div><h3>{t('everythingStocked')}</h3><p>{t('noBelowAlert')}</p></div>}
+        {lowItems.length ? <div className="attention-list">{lowItems.slice(0, 5).map((item) => <button key={item.id} onClick={() => onAdjust(item)}><div className={`product-glyph category-${categoryClass(item.category)}`}><CategoryIcon category={item.category} size={19} /></div><div className="attention-copy"><strong>{item.name}</strong><span>{categoryLabel(item.category)} · {t('minimum')} {formatQuantity(item.lowStockThreshold)}</span></div><div className="attention-count"><strong>{formatQuantity(item.quantity)}</strong><span>{unitLabel(item.unit)}</span></div><ChevronRight size={18} /></button>)}</div> : <div className="all-good"><div><Sparkles size={24} /></div><h3>{t('everythingStocked')}</h3><p>{t('noBelowAlert')}</p></div>}
       </div>
       <div className="card category-card"><header className="card-header"><div><span className="eyebrow">{t('productMix')}</span><h2>{t('byCategory')}</h2></div></header>
         {categoriesData.length ? <div className="category-bars">{categoriesData.slice(0, 6).map(([category, count], index) => <div className="category-bar" key={category}><div><span>{categoryLabel(category)}</span><strong>{count}</strong></div><div className="bar-track"><i style={{ width: `${(count / maxCategory) * 100}%`, '--delay': `${index * 60}ms` }} /></div></div>)}</div> : <p className="muted">{t('categoriesEmpty')}</p>}
@@ -677,7 +677,7 @@ function SalesCounter({ items, sales, posConfig, onRefresh, setToast }) {
             <CategoryIcon category={item.category} size={82} className="sale-product-art" />
             {inCart > 0 && <span className="cart-badge">{formatQuantity(inCart)}</span>}
             <strong className="sale-product-name">{item.name}</strong>
-            <div className="sale-product-footer"><span className="sale-product-price">{formatCurrency(item.price)}</span><span className="sale-product-stock"><b>{formatQuantity(item.quantity)}</b><small>{unitLabel(item.unit)}</small></span></div>
+            <div className="sale-product-footer"><span className="sale-product-price">{formatCurrency(item.price)}</span>{item.quantity > 0 && <span className="sale-product-stock"><b>{formatQuantity(item.quantity)}</b><small>{unitLabel(item.unit)}</small></span>}</div>
             {item.quantity <= 0 ? <i>{t('outOfStock')}</i> : <Plus className="sale-product-add" size={16} />}
           </button>
         })}</div> : <div className="pos-empty compact"><Search size={27} /><h3>{t('noProductsFound')}</h3></div>}
