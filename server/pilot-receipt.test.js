@@ -3,7 +3,7 @@ import test from 'node:test'
 import sharp from 'sharp'
 import { pilotReceiptConfiguration, renderPilotReceipt } from './pilot-receipt.js'
 
-test('pilot receipt renders a compact monochrome PNG with the sale snapshot', async () => {
+test('pilot receipt renders a Point-compatible 8-bit PNG with the sale snapshot', async () => {
   const previous = process.env.POINT_PILOT_RECEIPT_ENABLED
   process.env.POINT_PILOT_RECEIPT_ENABLED = 'true'
   try {
@@ -20,8 +20,10 @@ test('pilot receipt renders a compact monochrome PNG with the sale snapshot', as
     const metadata = await sharp(buffer).metadata()
     assert.equal(pilotReceiptConfiguration().enabled, true)
     assert.equal(metadata.format, 'png')
-    assert.equal(metadata.width, 576)
-    assert.ok(metadata.height >= 820)
+    assert.equal(metadata.width, 384)
+    assert.ok(metadata.height >= 546)
+    assert.notEqual(metadata.isPalette, true)
+    assert.equal(metadata.bitsPerSample, 8)
     assert.ok(buffer.length < 1024 * 1024)
   } finally {
     if (previous === undefined) delete process.env.POINT_PILOT_RECEIPT_ENABLED

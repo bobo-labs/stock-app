@@ -527,13 +527,15 @@ function SalesCounter({ items, sales, posConfig, onRefresh, setToast }) {
   const { t, categoryLabel, unitLabel, formatCurrency } = useI18n()
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState('All')
+  const [inStockOnly, setInStockOnly] = useState(true)
   const [cart, setCart] = useState([])
   const [checkout, setCheckout] = useState(null)
   const [selectedSale, setSelectedSale] = useState(null)
   const [busy, setBusy] = useState(false)
   const sellable = useMemo(() => items.filter((item) => item.sellable && item.price > 0), [items])
-  const presentCategories = categories.filter((category) => sellable.some((item) => item.category === category))
-  const products = sellable.filter((item) => (filter === 'All' || item.category === filter) && `${item.name} ${item.sku}`.toLowerCase().includes(search.toLowerCase()))
+  const catalogItems = useMemo(() => inStockOnly ? sellable.filter((item) => item.quantity > 0) : sellable, [inStockOnly, sellable])
+  const presentCategories = useMemo(() => categories.filter((category) => catalogItems.some((item) => item.category === category)), [catalogItems])
+  const products = catalogItems.filter((item) => (filter === 'All' || item.category === filter) && `${item.name} ${item.sku}`.toLowerCase().includes(search.toLowerCase()))
   const cartLines = cart.map((line) => ({ ...line, item: items.find((item) => item.id === line.itemId) })).filter((line) => line.item)
   const total = cartLines.reduce((sum, line) => sum + Math.round(line.item.price * line.quantity), 0)
   const count = cartLines.reduce((sum, line) => sum + line.quantity, 0)
@@ -688,12 +690,15 @@ function SalesCounter({ items, sales, posConfig, onRefresh, setToast }) {
   useEffect(() => {
     setSelectedSale((current) => current ? sales.find((sale) => sale.id === current.id) || current : null)
   }, [sales])
+  useEffect(() => {
+    if (filter !== 'All' && !presentCategories.includes(filter)) setFilter('All')
+  }, [filter, presentCategories])
 
   return <div className="page pos-page enter">
     <section className="page-heading pos-heading"><div><span className="eyebrow">{t('counterMode')}</span><h1>{t('salesCounter')}</h1><p>{t('salesDescription')}</p></div></section>
     <section className="pos-layout">
       <div className="catalog-panel">
-        <div className="toolbar pos-toolbar"><label className="search-box"><Search size={19} /><input aria-label={t('searchProducts')} value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t('searchProducts')} />{search && <button onClick={() => setSearch('')} aria-label={t('close')}><X size={16} /></button>}</label><div className="filter-scroll"><button className={filter === 'All' ? 'active' : ''} onClick={() => setFilter('All')}>{t('all')}</button>{presentCategories.map((category) => <button key={category} className={filter === category ? 'active' : ''} onClick={() => setFilter(category)}>{categoryLabel(category)}</button>)}</div></div>
+        <div className="toolbar pos-toolbar"><label className="search-box"><Search size={19} /><input aria-label={t('searchProducts')} value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t('searchProducts')} />{search && <button onClick={() => setSearch('')} aria-label={t('close')}><X size={16} /></button>}</label><div className="filter-scroll"><button className={filter === 'All' ? 'active' : ''} onClick={() => setFilter('All')}>{t('all')}</button>{presentCategories.map((category) => <button key={category} className={filter === category ? 'active' : ''} onClick={() => setFilter(category)}>{categoryLabel(category)}</button>)}</div><label className="stock-only-toggle"><input type="checkbox" checked={inStockOnly} onChange={(event) => setInStockOnly(event.target.checked)} /><i aria-hidden="true" /><span>{t('inStockOnly')}</span></label></div>
         {sellable.length === 0 ? <div className="card pos-empty"><div className="empty-art"><ReceiptText size={31} /></div><h3>{t('configureProductsForSale')}</h3><p>{t('configureProductsDescription')}</p></div> : products.length ? <div className="product-grid">{products.map((item) => {
           const inCart = cart.find((line) => line.itemId === item.id)?.quantity || 0
           return <button key={item.id} className={`sale-product category-${categoryClass(item.category)} ${item.quantity <= 0 ? 'is-unavailable' : ''}`} disabled={item.quantity <= 0 || inCart >= item.quantity} onClick={() => changeQuantity(item, 1)}>

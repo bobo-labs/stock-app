@@ -6,6 +6,7 @@ import sharp from 'sharp'
 const moduleDirectory = path.dirname(fileURLToPath(import.meta.url))
 const defaultLogoPath = path.join(moduleDirectory, '..', 'assets', 'atelier-del-puerto-receipt.png')
 const receiptWidth = 576
+const printerWidth = 384
 
 function environment(name, fallback = '') {
   return String(process.env[name] || fallback).trim()
@@ -154,9 +155,11 @@ export async function renderPilotReceipt(sale) {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${receiptWidth}" height="${finalHeight}" viewBox="0 0 ${receiptWidth} ${finalHeight}">${elements.join('')}</svg>`
   const output = await sharp(Buffer.from(svg))
     .flatten({ background: '#fff' })
+    .resize({ width: printerWidth, fit: 'inside', withoutEnlargement: true })
     .greyscale()
     .threshold(205)
-    .png({ compressionLevel: 9, palette: true, colours: 2 })
+    .toColourspace('srgb')
+    .png({ compressionLevel: 9, palette: false })
     .toBuffer()
   if (output.length > 1024 * 1024) throw new Error('Pilot receipt image exceeds Mercado Pago\'s 1 MB printing limit.')
   return output.toString('base64')
