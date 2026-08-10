@@ -103,6 +103,7 @@ export function pointConfiguration() {
     terminalConfigured: Boolean(terminalId),
     webhookConfigured: mockMode || Boolean(webhookSecret),
     terminalLabel: terminalId ? terminalId.split('__').at(-1)?.slice(-8) || '' : '',
+    pilotReceiptEnabled: process.env.POINT_PILOT_RECEIPT_ENABLED === 'true',
   }
 }
 
@@ -128,6 +129,47 @@ export async function createPointOrder(sale) {
       },
     },
   })
+}
+
+export async function createPointPrintAction({ externalReference, content, subtype = 'image' }) {
+  const { terminalId } = credentials()
+  if (!terminalId) throw configurationError()
+  if (!['custom', 'image'].includes(subtype)) {
+    throw Object.assign(new Error('Unsupported Point print subtype.'), { status: 400 })
+  }
+
+  if (mockMode) {
+    return {
+      id: `MOCK-PRINT-${externalReference}`,
+      type: 'print',
+      external_reference: externalReference,
+      status: 'processed',
+    }
+  }
+
+  return mercadoPagoRequest('/terminals/v1/actions', {
+    method: 'POST',
+    idempotencyKey: `print-${externalReference}`,
+    uncertainMessage: 'Mercado Pago did not confirm the pilot receipt print. Check the terminal before retrying.',
+    body: {
+      type: 'print',
+      external_reference: externalReference,
+      config: { point: { terminal_id: terminalId, subtype } },
+      content,
+    },
+  })
+}
+
+export async function getPointPrintAction(actionId) {
+  if (!actionId) throw Object.assign(new Error('Point print action ID is required.'), { status: 400 })
+  if (mockMode) {
+    return {
+      id: String(actionId),
+      type: 'print',
+      status: 'processed',
+    }
+  }
+  return mercadoPagoRequest(`/terminals/v1/actions/${encodeURIComponent(actionId)}`)
 }
 
 export async function getPointOrder(orderId, sale) {

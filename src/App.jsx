@@ -390,13 +390,13 @@ function CheckoutModal({ checkout, posConfig, onCash, onCard, onRetry, onCancelS
     {checkout.stage === 'success' && <div className="payment-result success">
       <div><BadgeCheck size={34} /></div><h3>{t('paymentApproved')}</h3><p>{sale?.paymentMethod === 'card' ? t('cardSaleCompleted') : t('cashSaleCompleted')}</p>
       <div className="success-total"><span>#{sale?.shortId}</span><strong>{formatCurrency(sale?.total || 0)}</strong></div>
-      {sale?.paymentMethod === 'card' && <div className="point-receipt-reminder"><ReceiptText size={17} /><span>{t('deliverPointReceipt')}</span></div>}
+      {sale?.paymentMethod === 'card' && <div className="point-receipt-reminder"><ReceiptText size={17} /><span>{t(posConfig.pilotReceiptEnabled ? 'pilotReceiptAutomatic' : 'deliverPointReceipt')}</span></div>}
       <button className="button primary" onClick={onClose}>{t('newSale')}</button>
     </div>}
   </Modal>
 }
 
-function SaleDetailsModal({ sale, onClose, onRefund, onRetryRefund, onCreditNote, onReconcilePoint, onResolveInventory, busy }) {
+function SaleDetailsModal({ sale, onClose, onRefund, onRetryRefund, onCreditNote, onReconcilePoint, onPrintPilotReceipt, onResolveInventory, busy }) {
   const { t, formatCurrency, formatTime, unitLabel } = useI18n()
   const [view, setView] = useState('details')
   const [quantities, setQuantities] = useState({})
@@ -474,6 +474,8 @@ function SaleDetailsModal({ sale, onClose, onRefund, onRetryRefund, onCreditNote
           <div><span>{t('netReceived')}</span><strong>{sale.mpNetReceivedAmount == null ? t('pendingData') : formatCurrency(sale.mpNetReceivedAmount)}</strong></div>
         </div>
         {pointVoucher && <div className="point-document-state"><ReceiptText size={16} /><div><strong>{t('pointVoucher')}</strong><span>{t('pointVoucherDescription')}</span></div></div>}
+        {['sent', 'printed'].includes(sale.pilotReceiptStatus) && <div className="point-document-state"><ReceiptText size={16} /><div><strong>{t(sale.pilotReceiptStatus === 'printed' ? 'pilotReceiptPrinted' : 'pilotReceiptSent')}</strong><span>#{sale.pilotReceiptActionId || sale.shortId}</span></div></div>}
+        {sale.pilotReceiptStatus === 'failed' && <div className="point-document-state refund-document-state"><AlertTriangle size={16} /><div><strong>{t('pilotReceiptFailed')}</strong><span>{sale.pilotReceiptError}</span></div><button type="button" className="button compact" onClick={() => onPrintPilotReceipt().catch(() => {})} disabled={busy}><RotateCw size={15} />{t('retryPilotReceipt')}</button></div>}
       </section>}
       <div className="sale-detail-lines">
         {sale.items.map((line) => <div key={line.lineId}><div><strong>{line.name}</strong><span>{formatQuantity(line.quantity)} {unitLabel(line.unit)} · {formatCurrency(line.unitPrice)}</span></div><b>{formatCurrency(line.lineTotal)}</b></div>)}
@@ -617,6 +619,18 @@ function SalesCounter({ items, sales, posConfig, onRefresh, setToast }) {
     } catch (error) { setToast({ type: 'error', message: error.message }); throw error }
     finally { setBusy(false) }
   }
+  const printPilotReceipt = async () => {
+    if (!selectedSale) return null
+    setBusy(true)
+    try {
+      const next = await api.printPilotReceipt(selectedSale.id)
+      setSelectedSale(next); await onRefresh()
+      const accepted = ['sent', 'printed'].includes(next.pilotReceiptStatus)
+      setToast({ type: accepted ? 'success' : 'error', message: accepted ? t(next.pilotReceiptStatus === 'printed' ? 'pilotReceiptPrinted' : 'pilotReceiptSent') : t('pilotReceiptFailed') })
+      return next
+    } catch (error) { setToast({ type: 'error', message: error.message }); throw error }
+    finally { setBusy(false) }
+  }
   const resolveRefundInventory = async (refundId, restock) => {
     if (!selectedSale) return null
     setBusy(true)
@@ -699,7 +713,7 @@ function SalesCounter({ items, sales, posConfig, onRefresh, setToast }) {
       </aside>
     </section>
     {checkout && <CheckoutModal checkout={checkout} posConfig={posConfig} onCash={payCash} onCard={payCard} onRetry={retry} onCancelSale={cancelSale} onClose={() => setCheckout(null)} busy={busy} />}
-    {selectedSale && <SaleDetailsModal sale={selectedSale} onClose={() => setSelectedSale(null)} onRefund={refundSale} onRetryRefund={retryRefund} onCreditNote={recordCreditNote} onReconcilePoint={reconcilePointSale} onResolveInventory={resolveRefundInventory} busy={busy} />}
+    {selectedSale && <SaleDetailsModal sale={selectedSale} onClose={() => setSelectedSale(null)} onRefund={refundSale} onRetryRefund={retryRefund} onCreditNote={recordCreditNote} onReconcilePoint={reconcilePointSale} onPrintPilotReceipt={printPilotReceipt} onResolveInventory={resolveRefundInventory} busy={busy} />}
   </div>
 }
 
