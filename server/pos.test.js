@@ -79,25 +79,34 @@ test('partial and full refunds are idempotent, restore selected stock, and track
     assert.equal((await store.listItems())[0].quantity, 6)
 
     const preparedPartial = await store.prepareRefund(paid.id, {
+      amount: 2500,
       items: [{ lineId: paid.items[0].lineId, quantity: 2 }], reason: 'Customer return', restock: true,
       creditNoteRequired: true, originalDocumentType: '39', originalFolio: '101',
     })
     assert.equal(preparedPartial.full, false)
-    assert.equal(preparedPartial.refund.amount, 3000)
+    assert.equal(preparedPartial.refund.amount, 2500)
     const partialOrder = {
       ...paidOrder, status: 'processed', status_detail: 'partially_refunded',
       transactions: {
         payments: [{ id: `PAY-${reserved.id}`, status: 'processed', status_detail: 'partially_refunded' }],
-        refunds: [{ id: 'MP-REFUND-1', amount: '3000', status: 'processed' }],
+        refunds: [{ id: 'MP-REFUND-1', amount: '2500', status: 'processed' }],
       },
     }
     assert.equal((await store.updateSaleFromPoint(partialOrder)).status, 'paid')
     const partial = await store.completeRefund(preparedPartial.refund.id, partialOrder)
     assert.equal(partial.status, 'paid')
-    assert.equal(partial.refundedTotal, 3000)
-    assert.equal(partial.refundableTotal, 3000)
+    assert.equal(partial.refundedTotal, 2500)
+    assert.equal(partial.refundableTotal, 3500)
     assert.equal(partial.refunds[0].creditNote.status, 'pending')
     assert.equal((await store.listItems())[0].quantity, 8)
+
+    await assert.rejects(
+      () => store.prepareRefund(paid.id, {
+        amount: 3501, items: [], reason: '', restock: false,
+        creditNoteRequired: false, originalDocumentType: '', originalFolio: '',
+      }),
+      (error) => error.status === 400,
+    )
 
     await store.completeRefund(preparedPartial.refund.id, partialOrder)
     assert.equal((await store.listItems())[0].quantity, 8)
@@ -108,20 +117,20 @@ test('partial and full refunds are idempotent, restore selected stock, and track
     assert.equal(withCreditNote.refunds[0].creditNote.folio, '55')
 
     const preparedFull = await store.prepareRefund(paid.id, {
-      items: [{ lineId: paid.items[0].lineId, quantity: 2 }], reason: '', restock: false,
+      amount: 3500, items: [], reason: '', restock: false,
       creditNoteRequired: false, originalDocumentType: '', originalFolio: '',
     })
     assert.equal(preparedFull.full, true)
     const full = await store.completeRefund(preparedFull.refund.id, {
       ...paidOrder, status: 'refunded', status_detail: 'refunded',
-      transactions: { payments: paidOrder.transactions.payments, refunds: [{ id: 'MP-REFUND-2', amount: '3000', status: 'processed' }] },
+      transactions: { payments: paidOrder.transactions.payments, refunds: [{ id: 'MP-REFUND-2', amount: '3500', status: 'processed' }] },
     })
     assert.equal(full.status, 'refunded')
     assert.equal(full.refundedTotal, 6000)
     assert.equal((await store.listItems())[0].quantity, 8)
     await assert.rejects(
       () => store.prepareRefund(paid.id, {
-        items: [{ lineId: paid.items[0].lineId, quantity: 1 }], reason: '', restock: true,
+        amount: 1, items: [{ lineId: paid.items[0].lineId, quantity: 1 }], reason: '', restock: true,
         creditNoteRequired: false, originalDocumentType: '', originalFolio: '',
       }),
       (error) => error.status === 409,

@@ -63,8 +63,12 @@ function cleanCart(body) {
 }
 
 function cleanRefund(body) {
-  if (!Array.isArray(body.items) || body.items.length === 0 || body.items.length > 100) throw badRequest('Select at least one product to refund.')
-  const items = body.items.map((line) => {
+  const amount = Number(body.amount)
+  if (!Number.isInteger(amount) || amount < 1) throw badRequest('Enter a refund amount of at least CLP 1.')
+  if (body.items != null && !Array.isArray(body.items)) throw badRequest('The refund products are invalid.')
+  const requestedItems = body.items || []
+  if (requestedItems.length > 100) throw badRequest('The refund contains too many products.')
+  const items = requestedItems.map((line) => {
     const lineId = String(line.lineId || '')
     const quantity = Number(line.quantity)
     if (!lineId || !Number.isFinite(quantity) || quantity <= 0 || quantity > 10000) throw badRequest('The refund contains an invalid quantity.')
@@ -73,9 +77,10 @@ function cleanRefund(body) {
   const originalDocumentType = String(body.originalDocumentType || '')
   if (originalDocumentType && !['33', '34', '39', '41'].includes(originalDocumentType)) throw badRequest('The original tax document type is invalid.')
   return {
+    amount,
     items,
     reason: String(body.reason || '').trim().slice(0, 300),
-    restock: body.restock !== false,
+    restock: body.restock === true && items.length > 0,
     creditNoteRequired: body.creditNoteRequired === true,
     originalDocumentType,
     originalFolio: String(body.originalFolio || '').trim().slice(0, 30),

@@ -27,6 +27,7 @@ test('sales metrics and the daily cash close reconcile payment methods', async (
     await store.attachPointOrder(cardSale.id, pointOrder)
     await store.updateSaleFromPoint(pointOrder)
     const cashRefund = await store.prepareRefund(cashSale.id, {
+      amount: 1500,
       items: [{ lineId: cashSale.items[0].lineId, quantity: 1 }], reason: 'Returned item', restock: true,
       creditNoteRequired: false, originalDocumentType: '', originalFolio: '',
     })

@@ -1019,7 +1019,7 @@ function refundConflict(message) {
   return Object.assign(new Error(message), { status: 409 })
 }
 
-function refundLinesForSale(sale, requested) {
+function refundLinesForSale(sale, requested = [], requestedAmount) {
   if (sale.status !== 'paid') throw refundConflict('Only an approved sale can be refunded.')
   if (sale.refunds.some((refund) => refund.status === 'pending')) throw refundConflict('This sale already has a refund in progress.')
   if (sale.refundableTotal <= 0) throw refundConflict('This sale has already been refunded in full.')
@@ -1048,8 +1048,10 @@ function refundLinesForSale(sale, requested) {
       restocked: false,
     }
   })
-  const amount = lines.reduce((sum, line) => sum + line.lineTotal, 0)
-  if (!lines.length || amount <= 0 || amount > sale.refundableTotal) throw Object.assign(new Error('Select at least one refundable product.'), { status: 400 })
+  const amount = Math.round(Number(requestedAmount))
+  if (!Number.isInteger(Number(requestedAmount)) || amount < 1 || amount > sale.refundableTotal) {
+    throw Object.assign(new Error(`Enter a refund amount between CLP 1 and CLP ${sale.refundableTotal}.`), { status: 400 })
+  }
   return { lines, amount, full: sale.refundedTotal + amount >= sale.total }
 }
 
@@ -1082,7 +1084,7 @@ export async function prepareRefund(saleId, input) {
       const storedSale = data.sales.find((entry) => entry.id === saleId)
       if (!storedSale) return null
       const sale = normalizeSale(storedSale)
-      const calculated = refundLinesForSale(sale, input.items)
+      const calculated = refundLinesForSale(sale, input.items, input.amount)
       const refund = refundInputRecord(saleId, input, calculated)
       storedSale.refunds.unshift(refund)
       storedSale.updatedAt = refund.updatedAt
@@ -1114,7 +1116,7 @@ export async function prepareRefund(saleId, input) {
       creditNote: creditNoteByRefund.get(refund.id) || null,
     }))
     const sale = normalizeSale(saleResult.rows[0], itemResult.rows, refunds)
-    const calculated = refundLinesForSale(sale, input.items)
+    const calculated = refundLinesForSale(sale, input.items, input.amount)
     const refund = refundInputRecord(saleId, input, calculated)
     await client.query(
       `INSERT INTO refunds (

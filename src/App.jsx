@@ -400,8 +400,9 @@ function SaleDetailsModal({ sale, onClose, onRefund, onRetryRefund, onCreditNote
   const { t, formatCurrency, formatTime, unitLabel } = useI18n()
   const [view, setView] = useState('details')
   const [quantities, setQuantities] = useState({})
+  const [refundAmountInput, setRefundAmountInput] = useState('')
   const [refundForm, setRefundForm] = useState({
-    reason: '', restock: true, creditNoteRequired: false, originalDocumentType: '39', originalFolio: '',
+    reason: '', restock: false, creditNoteRequired: false, originalDocumentType: '39', originalFolio: '',
   })
   const [creditNoteRefund, setCreditNoteRefund] = useState(null)
   const [creditNoteForm, setCreditNoteForm] = useState({ originalDocumentType: '39', originalFolio: '', folio: '', siiTrackId: '' })
@@ -414,7 +415,8 @@ function SaleDetailsModal({ sale, onClose, onRefund, onRetryRefund, onCreditNote
     ...line,
     refundableQuantity: Math.max(0, line.quantity - Number(refundedByLine.get(line.lineId) || 0)),
   })).filter((line) => line.refundableQuantity > 0)
-  const refundAmount = refundableLines.reduce((sum, line) => sum + Math.round(line.unitPrice * Number(quantities[line.lineId] || 0)), 0)
+  const refundAmount = Math.round(Number(refundAmountInput || 0))
+  const refundAmountValid = refundAmountInput !== '' && Number.isInteger(Number(refundAmountInput)) && refundAmount >= 1 && refundAmount <= sale.refundableTotal
   const selectedItems = refundableLines
     .map((line) => ({ lineId: line.lineId, quantity: Number(quantities[line.lineId] || 0) }))
     .filter((line) => line.quantity > 0)
@@ -425,14 +427,15 @@ function SaleDetailsModal({ sale, onClose, onRefund, onRetryRefund, onCreditNote
 
   const openRefund = () => {
     setQuantities({})
-    setRefundForm({ reason: '', restock: true, creditNoteRequired: false, originalDocumentType: '39', originalFolio: '' })
+    setRefundAmountInput(String(Math.round(sale.refundableTotal)))
+    setRefundForm({ reason: '', restock: false, creditNoteRequired: false, originalDocumentType: '39', originalFolio: '' })
     setView('refund')
   }
   const submitRefund = async (event) => {
     event.preventDefault()
-    if (!selectedItems.length) return
+    if (!refundAmountValid) return
     try {
-      const next = await onRefund({ ...refundForm, items: selectedItems })
+      const next = await onRefund({ ...refundForm, amount: refundAmount, restock: refundForm.restock && selectedItems.length > 0, items: selectedItems })
       if (next) setView('details')
     } catch {}
   }
@@ -490,18 +493,24 @@ function SaleDetailsModal({ sale, onClose, onRefund, onRetryRefund, onCreditNote
 
     {view === 'refund' && <form className="refund-form" onSubmit={submitRefund}>
       <p className="modal-description">{t('refundDescription')}</p>
+      <section className="refund-amount-card">
+        <div className="field full refund-amount-field"><label htmlFor="refund-amount">{t('refundAmountLabel')}</label><div className="money-input"><span aria-hidden="true">$</span><input id="refund-amount" type="number" inputMode="numeric" min="1" max={sale.refundableTotal} step="1" required value={refundAmountInput} onChange={(event) => setRefundAmountInput(event.target.value)} aria-invalid={refundAmountInput !== '' && !refundAmountValid} /></div></div>
+        <div className="refund-amount-meta"><span>{t('refundAmountAvailable')}: <strong>{formatCurrency(sale.refundableTotal)}</strong></span><button type="button" className="text-button" onClick={() => setRefundAmountInput(String(Math.round(sale.refundableTotal)))}>{t('useMaximum')}</button></div>
+        <small>{t('customRefundExplanation')}</small>
+      </section>
       <div className="section-label"><span>{t('selectProductsToRefund')}</span></div>
+      <p className="refund-products-description">{t('refundProductsDescription')}</p>
       <div className="refund-lines">{refundableLines.map((line) => <label key={line.lineId}>
         <span><strong>{line.name}</strong><small>{formatQuantity(line.refundableQuantity)} {unitLabel(line.unit)} · {formatCurrency(line.unitPrice)}</small></span>
         <input type="number" min="0" max={line.refundableQuantity} step="0.01" inputMode="decimal" aria-label={`${t('refundQuantity')}: ${line.name}`} value={quantities[line.lineId] ?? ''} onChange={(event) => setQuantities((current) => ({ ...current, [line.lineId]: event.target.value }))} placeholder="0" />
       </label>)}</div>
-      <div className="refund-total"><span>{refundAmount >= sale.refundableTotal ? t('fullRefund') : t('partialRefund')}</span><strong>{formatCurrency(refundAmount)}</strong></div>
-      <label className="switch-field refund-switch"><input type="checkbox" checked={refundForm.restock} onChange={(event) => setRefundForm((current) => ({ ...current, restock: event.target.checked }))} /><i aria-hidden="true" /><span><strong>{t('returnToInventory')}</strong><small>{t('returnToInventoryDescription')}</small></span></label>
+      <div className={`refund-total ${refundAmountValid ? '' : 'invalid'}`}><span>{refundAmount >= sale.refundableTotal ? t('fullRefund') : t('partialRefund')}</span><strong>{formatCurrency(refundAmount)}</strong></div>
+      <label className={`switch-field refund-switch ${selectedItems.length ? '' : 'is-disabled'}`}><input type="checkbox" checked={selectedItems.length > 0 && refundForm.restock} disabled={!selectedItems.length} onChange={(event) => setRefundForm((current) => ({ ...current, restock: event.target.checked }))} /><i aria-hidden="true" /><span><strong>{t('returnToInventory')}</strong><small>{selectedItems.length ? t('returnToInventoryDescription') : t('selectProductsToRestock')}</small></span></label>
       <div className="field full"><label htmlFor="refund-reason">{t('refundReason')} <span>{t('optional')}</span></label><input id="refund-reason" value={refundForm.reason} onChange={(event) => setRefundForm((current) => ({ ...current, reason: event.target.value }))} placeholder={t('refundReasonPlaceholder')} /></div>
       {pointVoucher ? <div className="point-document-state refund-document-state"><ReceiptText size={16} /><div><strong>{t('pointVoucherRefund')}</strong><span>{t('pointVoucherRefundDescription')}</span></div></div> : <label className="switch-field refund-switch"><input type="checkbox" checked={refundForm.creditNoteRequired} onChange={(event) => setRefundForm((current) => ({ ...current, creditNoteRequired: event.target.checked }))} /><i aria-hidden="true" /><span><strong>{t('electronicReceiptIssued')}</strong><small>{t('electronicReceiptDescription')}</small></span></label>}
       {!pointVoucher && refundForm.creditNoteRequired && <div className="form-grid credit-note-reference"><div className="field"><label htmlFor="original-document-type">{t('originalDocumentType')}</label><select id="original-document-type" value={refundForm.originalDocumentType} onChange={(event) => setRefundForm((current) => ({ ...current, originalDocumentType: event.target.value }))}><option value="39">{t('documentType39')}</option><option value="41">{t('documentType41')}</option><option value="33">{t('documentType33')}</option><option value="34">{t('documentType34')}</option></select></div><div className="field"><label htmlFor="original-folio">{t('originalFolio')} <span>{t('optional')}</span></label><input id="original-folio" inputMode="numeric" value={refundForm.originalFolio} onChange={(event) => setRefundForm((current) => ({ ...current, originalFolio: event.target.value }))} /></div></div>}
       <div className="refund-payment-hint"><AlertTriangle size={16} /><span>{sale.paymentMethod === 'card' ? t('pointRefundHint') : t('cashRefundHint')}</span></div>
-      <div className="modal-actions"><button type="button" className="button secondary" onClick={() => setView('details')} disabled={busy}>{t('cancel')}</button><button className="button primary" disabled={busy || !selectedItems.length || refundAmount <= 0}>{busy ? t('processingRefund') : t('confirmRefund')}<Undo2 size={18} /></button></div>
+      <div className="modal-actions"><button type="button" className="button secondary" onClick={() => setView('details')} disabled={busy}>{t('cancel')}</button><button className="button primary" disabled={busy || !refundAmountValid}>{busy ? t('processingRefund') : t('confirmRefund')}<Undo2 size={18} /></button></div>
     </form>}
 
     {view === 'credit-note' && <form className="form-stack credit-note-form" onSubmit={submitCreditNote}>
