@@ -161,7 +161,7 @@ test('Point adapter follows the documented Orders API contract', async () => {
       expiration_time: 'PT10M',
       description: `Bakery sale ${sale.shortId}`,
       transactions: { payments: [{ amount: '4850' }] },
-      config: { point: { terminal_id: terminalId, print_on_terminal: 'no_ticket' } },
+      config: { point: { terminal_id: terminalId, print_on_terminal: 'seller_ticket' } },
     })
   } finally {
     if (server.listening) await close(server)

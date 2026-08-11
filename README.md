@@ -110,7 +110,7 @@ Never put Access Tokens, database passwords, PINs, or webhook secrets in GitHub.
 
 ### Point receipts
 
-The experimental custom Point receipt has been retired. Bakery POS no longer submits Printing API actions automatically or from Activity, and previous `POINT_PILOT_*` variables are ignored and can be removed from Railway. Payment orders continue using `print_on_terminal: no_ticket`; receipt and DTE delivery remain the responsibility of the Mercado Pago account configuration until a certified tax provider is integrated.
+The experimental custom Point receipt has been retired. Bakery POS no longer submits Printing API actions automatically or from Activity, and previous `POINT_PILOT_*` variables are ignored and can be removed from Railway. Card-payment orders use `print_on_terminal: seller_ticket`, so the Point terminal prints Mercado Pago's native seller voucher after an approved payment. This voucher is controlled by Mercado Pago; DTE issuance still depends on the tax configuration of the collecting Mercado Pago account until a certified tax provider is integrated.
 
 ## Payment and inventory behavior
 

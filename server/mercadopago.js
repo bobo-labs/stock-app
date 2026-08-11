@@ -123,7 +123,7 @@ export async function createPointOrder(sale) {
       config: {
         point: {
           terminal_id: terminalId,
-          print_on_terminal: 'no_ticket',
+          print_on_terminal: 'seller_ticket',
         },
       },
     },
