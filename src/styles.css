@@ -90,13 +90,13 @@ h1, h2, h3, p { margin-top: 0; }
 .welcome-row h1, .page-heading h1 { margin: 0 0 8px; font-size: clamp(28px, 3vw, 38px); line-height: 1.1; letter-spacing: -.04em; }
 .welcome-row p, .page-heading p { margin: 0; color: var(--muted); font-size: 14px; }
 .button { display: inline-flex; min-height: 46px; align-items: center; justify-content: center; gap: 8px; padding: 0 17px; border: 1px solid transparent; border-radius: 12px; font-weight: 700; font-size: 13px; transition: transform .18s ease, box-shadow .18s ease, background .18s ease; }
-.button:hover { transform: translateY(-1px); }
-.button:active { transform: scale(.98); }
+.button:hover:not(:disabled) { transform: translateY(-1px); }
+.button:active:not(:disabled) { transform: scale(.98); }
 .button.primary { color: #fff; background: var(--cocoa); box-shadow: 0 7px 18px rgba(109, 69, 53, .18); }
-.button.primary:hover { background: var(--cocoa-dark); box-shadow: 0 9px 24px rgba(109, 69, 53, .24); }
+.button.primary:hover:not(:disabled) { background: var(--cocoa-dark); box-shadow: 0 9px 24px rgba(109, 69, 53, .24); }
 .button.secondary { border-color: var(--line); background: #fff; color: var(--ink); box-shadow: var(--shadow-sm); }
 .button.compact { min-height: 38px; padding: 0 13px; border-color: var(--line); background: #fff; font-size: 12px; }
-.button:disabled { opacity: .6; cursor: wait; transform: none; }
+.button:disabled { opacity: .58; cursor: default; box-shadow: none; transform: none; }
 .icon-button { display: grid; width: 44px; height: 44px; flex: 0 0 auto; place-items: center; padding: 0; border: 1px solid var(--line); border-radius: 12px; background: #fff; transition: background .18s ease, transform .18s ease; }
 .icon-button:hover { background: #f7f2ec; }
 .icon-button:active { transform: scale(.95); }
@@ -540,7 +540,7 @@ h1, h2, h3, p { margin-top: 0; }
 .delete-confirmation > p { max-width: 430px; margin: 0 auto; color: var(--muted); font-size: 13px; line-height: 1.6; }
 .delete-stock-warning { display: flex; align-items: center; gap: 9px; margin-top: 18px; padding: 11px 13px; border: 1px solid #e8c8c4; border-radius: 6px; color: #713b36; background: var(--rose-soft); text-align: left; font-size: 12px; line-height: 1.45; }
 .danger-button { color: #fff; background: var(--danger); box-shadow: 0 5px 12px rgba(160,68,61,.18); }
-.danger-button:hover { background: #873932; transform: translateY(-1px); }
+.danger-button:hover:not(:disabled) { background: #873932; transform: translateY(-1px); }
 .current-balance { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; padding: 14px; border: 1px solid var(--line); border-radius: 14px; background: #faf6f1; }
 .current-balance span, .current-balance strong { display: block; }
 .current-balance span { margin-bottom: 4px; color: var(--muted); font-size: 10px; }
@@ -916,7 +916,7 @@ html[data-theme='dark'] .topbar { border-color: var(--line); background: rgba(36
 html[data-theme='dark'] .language-toggle { background: rgba(53,54,56,.9); }
 html[data-theme='dark'] :is(.card,.metric-card,.analytics-kpis article,.range-switch,.operations-strip,.cash-close-card,.inventory-row,.cart-panel,.sale-product,.modal,.app-error-card) { background: var(--surface); }
 html[data-theme='dark'] :is(.button.secondary,.button.compact,.icon-button,.terminal-chip,.payment-options > button,.quantity-stepper button,.payment-reference,.field input,.field select,.field textarea,.pin-input,.toast) { border-color: var(--line); background: var(--surface-strong); color: var(--ink); }
-html[data-theme='dark'] :is(.button.secondary,.button.compact,.icon-button):hover { background: #3d3e40; }
+html[data-theme='dark'] :is(.button.secondary,.button.compact,.icon-button):hover:not(:disabled) { background: #3d3e40; }
 html[data-theme='dark'] :is(.sidebar nav button:hover,.attention-list > button:hover,.inventory-row:hover,.sales-list > button:not(:disabled):hover) { background: #373638; }
 html[data-theme='dark'] :is(.inventory-head,.cart-panel > footer,.checkout-total,.success-total,.current-balance,.sellable-panel) { background: #323234; }
 html[data-theme='dark'] :is(.search-box,.filter-scroll button,.segmented) { border-color: var(--line); background: #323234; }
