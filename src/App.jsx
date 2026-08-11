@@ -319,14 +319,16 @@ function Inventory({ items, onAdd, onAdjust, onEdit }) {
   const { t, categoryLabel } = useI18n()
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState('All')
-  const filtered = items.filter((item) => {
+  const [inStockOnly, setInStockOnly] = useState(true)
+  const visibleItems = inStockOnly ? items.filter((item) => item.quantity > 0) : items
+  const filtered = visibleItems.filter((item) => {
     const textMatch = `${item.name} ${item.category} ${item.sku}`.toLowerCase().includes(search.toLowerCase())
     const filterMatch = filter === 'All' || filter === item.category || (filter === 'Low stock' && item.quantity <= item.lowStockThreshold) || (filter === 'For sale' && item.sellable)
     return textMatch && filterMatch
   })
-  const presentCategories = categories.filter((category) => items.some((item) => item.category === category))
+  const presentCategories = categories.filter((category) => visibleItems.some((item) => item.category === category))
   return <div className="page enter"><section className="page-heading"><div><span className="eyebrow">{t('allProducts')}</span><h1>{t('inventory')}</h1><p>{t('inventoryDescription')}</p></div><button className="button primary desktop-action" onClick={onAdd}><Plus size={19} /> {t('addProduct')}</button></section>
-    <div className="toolbar"><label className="search-box"><Search size={19} /><input aria-label={t('searchPlaceholder')} value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t('searchPlaceholder')} />{search && <button onClick={() => setSearch('')} aria-label={t('close')}><X size={16} /></button>}</label><div className="filter-scroll"><button className={filter === 'All' ? 'active' : ''} onClick={() => setFilter('All')}>{t('all')} <span>{items.length}</span></button><button className={filter === 'For sale' ? 'active' : ''} onClick={() => setFilter('For sale')}>{t('forSale')} <span>{items.filter((item) => item.sellable).length}</span></button><button className={filter === 'Low stock' ? 'active' : ''} onClick={() => setFilter('Low stock')}>{t('lowStock')} <span>{items.filter((item) => item.quantity <= item.lowStockThreshold).length}</span></button>{presentCategories.map((category) => <button key={category} className={filter === category ? 'active' : ''} onClick={() => setFilter(category)}>{categoryLabel(category)}</button>)}</div></div>
+    <div className="toolbar"><label className="search-box"><Search size={19} /><input aria-label={t('searchPlaceholder')} value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t('searchPlaceholder')} />{search && <button onClick={() => setSearch('')} aria-label={t('close')}><X size={16} /></button>}</label><label className="stock-only-toggle"><input type="checkbox" checked={inStockOnly} onChange={(event) => setInStockOnly(event.target.checked)} /><i aria-hidden="true" /><span>{t('inStockOnly')}</span></label><div className="filter-scroll"><button className={filter === 'All' ? 'active' : ''} onClick={() => setFilter('All')}>{t('all')} <span>{visibleItems.length}</span></button><button className={filter === 'For sale' ? 'active' : ''} onClick={() => setFilter('For sale')}>{t('forSale')} <span>{visibleItems.filter((item) => item.sellable).length}</span></button><button className={filter === 'Low stock' ? 'active' : ''} onClick={() => setFilter('Low stock')}>{t('lowStock')} <span>{visibleItems.filter((item) => item.quantity <= item.lowStockThreshold).length}</span></button>{presentCategories.map((category) => <button key={category} className={filter === category ? 'active' : ''} onClick={() => setFilter(category)}>{categoryLabel(category)}</button>)}</div></div>
     <section className="card inventory-card">{items.length === 0 ? <EmptyState onAdd={onAdd} /> : filtered.length ? <InventoryList items={filtered} onAdjust={onAdjust} onEdit={onEdit} /> : <div className="empty-state compact"><Search size={28} /><h3>{t('noProductsFound')}</h3><p>{t('noProductsDescription')}</p></div>}</section>
   </div>
 }
@@ -698,7 +700,7 @@ function SalesCounter({ items, sales, posConfig, onRefresh, setToast }) {
     <section className="page-heading pos-heading"><div><span className="eyebrow">{t('counterMode')}</span><h1>{t('salesCounter')}</h1><p>{t('salesDescription')}</p></div></section>
     <section className="pos-layout">
       <div className="catalog-panel">
-        <div className="toolbar pos-toolbar"><label className="search-box"><Search size={19} /><input aria-label={t('searchProducts')} value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t('searchProducts')} />{search && <button onClick={() => setSearch('')} aria-label={t('close')}><X size={16} /></button>}</label><div className="filter-scroll"><button className={filter === 'All' ? 'active' : ''} onClick={() => setFilter('All')}>{t('all')}</button>{presentCategories.map((category) => <button key={category} className={filter === category ? 'active' : ''} onClick={() => setFilter(category)}>{categoryLabel(category)}</button>)}</div><label className="stock-only-toggle"><input type="checkbox" checked={inStockOnly} onChange={(event) => setInStockOnly(event.target.checked)} /><i aria-hidden="true" /><span>{t('inStockOnly')}</span></label></div>
+        <div className="toolbar pos-toolbar"><label className="search-box"><Search size={19} /><input aria-label={t('searchProducts')} value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t('searchProducts')} />{search && <button onClick={() => setSearch('')} aria-label={t('close')}><X size={16} /></button>}</label><label className="stock-only-toggle"><input type="checkbox" checked={inStockOnly} onChange={(event) => setInStockOnly(event.target.checked)} /><i aria-hidden="true" /><span>{t('inStockOnly')}</span></label><div className="filter-scroll"><button className={filter === 'All' ? 'active' : ''} onClick={() => setFilter('All')}>{t('all')}</button>{presentCategories.map((category) => <button key={category} className={filter === category ? 'active' : ''} onClick={() => setFilter(category)}>{categoryLabel(category)}</button>)}</div></div>
         {sellable.length === 0 ? <div className="card pos-empty"><div className="empty-art"><ReceiptText size={31} /></div><h3>{t('configureProductsForSale')}</h3><p>{t('configureProductsDescription')}</p></div> : products.length ? <div className="product-grid">{products.map((item) => {
           const inCart = cart.find((line) => line.itemId === item.id)?.quantity || 0
           return <button key={item.id} className={`sale-product category-${categoryClass(item.category)} ${item.quantity <= 0 ? 'is-unavailable' : ''}`} disabled={item.quantity <= 0 || inCart >= item.quantity} onClick={() => changeQuantity(item, 1)}>
@@ -842,14 +844,34 @@ function MetricsPage({ metrics, range, onRangeChange, onRefresh, onOpenClose, on
   </div>
 }
 
-function Activity({ movements }) {
-  const { t, formatDate } = useI18n()
+function Activity({ movements, sales, posConfig, onPrintReceipt, printingSaleId }) {
+  const { t, formatCurrency, formatDate, formatTime } = useI18n()
   const grouped = movements.reduce((acc, movement) => {
     const key = new Date(movement.createdAt).toDateString()
     acc[key] = [...(acc[key] || []), movement]
     return acc
   }, {})
-  return <div className="page enter"><section className="page-heading"><div><span className="eyebrow">{t('activityTrail')}</span><h1>{t('activity')}</h1><p>{t('activityDescription')}</p></div></section><section className="card history-card">{movements.length ? Object.entries(grouped).map(([day, entries]) => <div className="history-group" key={day}><h3>{new Date(day).toDateString() === new Date().toDateString() ? t('today') : formatDate(new Date(day))}</h3><div>{entries.map((movement) => <Movement movement={movement} key={movement.id} />)}</div></div>) : <div className="empty-state compact"><History size={30} /><h3>{t('noActivity')}</h3><p>{t('noActivityDescription')}</p></div>}</section></div>
+  const printableSales = sales.filter((sale) => sale.paymentMethod === 'card' && ['paid', 'refunded'].includes(sale.status))
+  return <div className="page enter activity-page">
+    <section className="page-heading"><div><span className="eyebrow">{t('activityTrail')}</span><h1>{t('activity')}</h1><p>{t('activityDescription')}</p></div></section>
+    <section className="card receipt-history-card">
+      <header className="card-header"><div><span className="eyebrow">Point</span><h2>{t('receiptHistory')}</h2><p>{t('receiptHistoryDescription')}</p></div></header>
+      {printableSales.length ? <div className="receipt-history-list">{printableSales.map((sale) => {
+        const state = sale.status === 'paid' && sale.refundedTotal > 0 ? { label: t('salePartiallyRefunded'), tone: 'warning' } : saleState(sale.status, t)
+        const previouslyPrinted = ['sent', 'printed'].includes(sale.pilotReceiptStatus)
+        return <article className="receipt-history-item" key={sale.id}>
+          <div className="receipt-history-icon"><ReceiptText size={19} /></div>
+          <div className="receipt-history-copy"><strong>#{sale.shortId}</strong><span>{formatTime(sale.createdAt)} · {sale.items.length} {sale.items.length === 1 ? t('item') : t('items')}</span></div>
+          <div className="receipt-history-total"><strong>{formatCurrency(sale.total)}</strong><span className={`sale-status ${state.tone}`}>{state.label}</span></div>
+          <button className="button secondary receipt-print-button" disabled={!posConfig.pilotReceiptEnabled || printingSaleId === sale.id} onClick={() => onPrintReceipt(sale)}>
+            {printingSaleId === sale.id ? <RotateCw className="spin" size={16} /> : <ReceiptText size={16} />}
+            {t(previouslyPrinted ? 'reprintReceipt' : 'printReceipt')}
+          </button>
+        </article>
+      })}</div> : <div className="activity-empty-inline"><ReceiptText size={25} /><span>{t('noReceipts')}</span></div>}
+    </section>
+    <section className="card history-card"><header className="activity-section-header"><span className="eyebrow">{t('stockMovementHistory')}</span></header>{movements.length ? Object.entries(grouped).map(([day, entries]) => <div className="history-group" key={day}><h3>{new Date(day).toDateString() === new Date().toDateString() ? t('today') : formatDate(new Date(day))}</h3><div>{entries.map((movement) => <Movement movement={movement} key={movement.id} />)}</div></div>) : <div className="empty-state compact"><History size={30} /><h3>{t('noActivity')}</h3><p>{t('noActivityDescription')}</p></div>}</section>
+  </div>
 }
 
 export default function App() {
@@ -868,6 +890,7 @@ export default function App() {
   const [modal, setModal] = useState(null)
   const [busy, setBusy] = useState(false)
   const [toast, setToast] = useState(null)
+  const [printingSaleId, setPrintingSaleId] = useState(null)
   const [mobileMenu, setMobileMenu] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => window.localStorage.getItem('bakery-sidebar') !== 'expanded')
   const [theme, setTheme] = useState(() => window.localStorage.getItem('bakery-theme') === 'dark' ? 'dark' : 'light')
@@ -965,6 +988,20 @@ export default function App() {
       setBusy(false)
     }
   }
+  const printActivityReceipt = async (sale) => {
+    setPrintingSaleId(sale.id)
+    try {
+      const updated = await api.printPilotReceipt(sale.id)
+      setSales((current) => current.map((entry) => entry.id === updated.id ? updated : entry))
+      const accepted = ['sent', 'printed'].includes(updated.pilotReceiptStatus)
+      setToast({ type: accepted ? 'success' : 'error', message: accepted ? t('receiptPrintQueued') : (updated.pilotReceiptError || t('pilotReceiptFailed')) })
+    } catch (error) {
+      if (error.status === 401) setAuth((current) => ({ ...current, authenticated: false }))
+      setToast({ type: 'error', message: error.message })
+    } finally {
+      setPrintingSaleId(null)
+    }
+  }
   const saveCashClose = async (form) => {
     setBusy(true)
     try {
@@ -1011,7 +1048,7 @@ export default function App() {
         {page === 'pos' && <SalesCounter items={items} sales={sales} posConfig={posConfig} onRefresh={refresh} setToast={setToast} />}
         {page === 'inventory' && <Inventory items={items} onAdd={() => setModal({ type: 'add' })} onAdjust={(item) => setModal({ type: 'adjust', item })} onEdit={(item) => setModal({ type: 'edit', item })} />}
         {page === 'metrics' && <MetricsPage metrics={metricsData} range={metricsRange} onRangeChange={setMetricsRange} onRefresh={() => loadMetrics(metricsRange)} onOpenClose={() => setModal({ type: 'cash-close' })} onExport={exportDailyReport} loading={metricsLoading} exporting={exportingReport} />}
-        {page === 'activity' && <Activity movements={movements} />}
+        {page === 'activity' && <Activity movements={movements} sales={sales} posConfig={posConfig} onPrintReceipt={printActivityReceipt} printingSaleId={printingSaleId} />}
       </>}
     </main>
     <nav className="bottom-nav">{nav.map(({ id, label, icon: Icon }) => <button key={id} className={page === id ? 'active' : ''} onClick={() => setPage(id)}><Icon size={20} /><span>{label}</span></button>)}</nav>

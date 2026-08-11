@@ -33,6 +33,12 @@ test('pilot receipt print state prevents duplicate actions and records terminal 
     updated = await store.completePilotReceiptPrint(sale.id, { id: 'ACTION-1', status: 'processed' })
     assert.equal(updated.pilotReceiptStatus, 'printed')
     assert.ok(updated.pilotReceiptPrintedAt)
+
+    assert.ok(await store.claimPilotReceiptPrint(sale.id, true, true))
+    assert.equal(await store.claimPilotReceiptPrint(sale.id, true, true), null)
+    updated = await store.completePilotReceiptPrint(sale.id, { id: 'ACTION-2', status: 'created' })
+    assert.equal(updated.pilotReceiptStatus, 'sent')
+    assert.equal(updated.pilotReceiptActionId, 'ACTION-2')
   } finally {
     if (previousDataPath === undefined) delete process.env.DATA_PATH
     else process.env.DATA_PATH = previousDataPath

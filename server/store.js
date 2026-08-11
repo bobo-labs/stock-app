@@ -1031,15 +1031,16 @@ export async function updateSalePaymentDetails(saleId, payment) {
   return rows[0] ? getSale(saleId) : null
 }
 
-export async function claimPilotReceiptPrint(saleId, retryFailed = false) {
+export async function claimPilotReceiptPrint(saleId, retryFailed = false, forceReprint = false) {
   if (!pool) return mutateFileData((data) => {
     const sale = data.sales.find((entry) => entry.id === saleId)
-    if (!sale || sale.status !== 'paid' || ['sent', 'printed'].includes(sale.pilotReceiptStatus)) return null
+    if (!sale || !['paid', 'refunded'].includes(sale.status)) return null
     const stale = sale.pilotReceiptStatus === 'printing'
       && Date.now() - new Date(sale.updatedAt || 0).getTime() > 120000
     const claimable = sale.pilotReceiptStatus === 'not_requested'
       || stale
       || (retryFailed && sale.pilotReceiptStatus === 'failed')
+      || (forceReprint && ['sent', 'printed'].includes(sale.pilotReceiptStatus))
     if (!claimable) return null
     sale.pilotReceiptStatus = 'printing'
     sale.pilotReceiptError = ''
@@ -1049,12 +1050,13 @@ export async function claimPilotReceiptPrint(saleId, retryFailed = false) {
 
   const { rows } = await pool.query(
     `UPDATE sales SET pilot_receipt_status='printing', pilot_receipt_error='', updated_at=NOW()
-     WHERE id=$1 AND status='paid' AND pilot_receipt_status NOT IN ('sent','printed')
+     WHERE id=$1 AND status IN ('paid','refunded')
        AND (pilot_receipt_status='not_requested'
-         OR (pilot_receipt_status='printing' AND updated_at < NOW() - INTERVAL '2 minutes')
-         OR ($2::boolean AND pilot_receipt_status='failed'))
+          OR (pilot_receipt_status='printing' AND updated_at < NOW() - INTERVAL '2 minutes')
+         OR ($2::boolean AND pilot_receipt_status='failed')
+         OR ($3::boolean AND pilot_receipt_status IN ('sent','printed')))
      RETURNING id`,
-    [saleId, retryFailed],
+    [saleId, retryFailed, forceReprint],
   )
   return rows[0] ? getSale(saleId) : null
 }

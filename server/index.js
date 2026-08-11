@@ -202,14 +202,16 @@ function trackPilotReceiptAction(saleId, action) {
   }
 }
 
-async function printPilotReceipt(sale, retryFailed = false) {
-  if (!pilotReceiptConfiguration().enabled || sale?.paymentMethod !== 'card' || sale?.status !== 'paid') return sale
-  const claimed = await claimPilotReceiptPrint(sale.id, retryFailed)
+async function printPilotReceipt(sale, retryFailed = false, forceReprint = false) {
+  const printableStatus = sale?.status === 'paid' || (forceReprint && sale?.status === 'refunded')
+  if (!pilotReceiptConfiguration().enabled || sale?.paymentMethod !== 'card' || !printableStatus) return sale
+  const claimed = await claimPilotReceiptPrint(sale.id, retryFailed, forceReprint)
   if (!claimed) return getSale(sale.id)
   try {
     const content = await renderPilotReceipt(claimed)
+    const reprinting = forceReprint && ['sent', 'printed'].includes(sale.pilotReceiptStatus)
     const action = await createPointPrintAction({
-      externalReference: `PILOT-${claimed.shortId}`,
+      externalReference: reprinting ? `PILOT-${claimed.shortId}-${Date.now()}` : `PILOT-${claimed.shortId}`,
       subtype: 'image',
       content,
     })
@@ -485,10 +487,10 @@ app.post('/api/sales/:id/print-pilot-receipt', async (req, res, next) => {
     }
     const sale = await getSale(req.params.id)
     if (!sale) return res.status(404).json({ error: 'Sale not found.' })
-    if (sale.paymentMethod !== 'card' || sale.status !== 'paid') {
-      throw Object.assign(new Error('Only approved Point sales can print a pilot receipt.'), { status: 409 })
+    if (sale.paymentMethod !== 'card' || !['paid', 'refunded'].includes(sale.status)) {
+      throw Object.assign(new Error('Only approved Point sales can print a receipt.'), { status: 409 })
     }
-    res.json(await printPilotReceipt(sale, true))
+    res.json(await printPilotReceipt(sale, true, true))
   } catch (error) { next(error) }
 })
 app.post('/api/sales/:id/cancel', async (req, res, next) => {
