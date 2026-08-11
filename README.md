@@ -105,6 +105,7 @@ Official references:
 | `MERCADOPAGO_MOCK` | Local-only Point simulator when set to `true`. |
 | `MERCADOPAGO_API_BASE` | Optional API base override for controlled testing. |
 | `POINT_PILOT_RECEIPT_ENABLED` | Set to `true` to enable the non-tax pilot receipt after an approved Point card sale. Disabled by default. |
+| `POINT_PILOT_LOGO_ENABLED` | Set to `false` to skip the bundled thermal logo image. Enabled by default when pilot receipts are active. |
 | `POINT_PILOT_BUSINESS_NAME` | Business name shown on the pilot receipt. Defaults to `Atelier del Puerto`. |
 | `POINT_PILOT_BUSINESS_RUT` | Demonstration RUT text shown on the pilot receipt. Do not present it as tax data until verified. |
 | `POINT_PILOT_BUSINESS_ADDRESS` | Address shown on the pilot receipt. |
@@ -115,7 +116,7 @@ Never put Access Tokens, database passwords, PINs, or webhook secrets in GitHub.
 
 ### Pilot Point receipt
 
-The optional pilot receipt is a demonstration print generated from Bakery POS's immutable sale lines after Mercado Pago confirms a card payment. It uses Mercado Pago's native `custom` Point print format (text plus supported formatting tags), and is explicitly labelled **not tax-valid**. It does not create, replace, or simulate an SII DTE, CAF, folio, TED, or electronic signature. The native format deliberately omits the logo because Point only accepts a logo as a separate PNG/JPEG image print. Keep `POINT_PILOT_RECEIPT_ENABLED` unset in normal production until a supervised physical pilot is intentionally enabled.
+The optional pilot receipt is a demonstration print generated from Bakery POS's immutable sale lines after Mercado Pago confirms a card payment. It sends the bundled thermal logo as a compact `image` action and the sale detail as a separate native `custom` action (text plus supported formatting tags). Reprints reflect the current paid, partially refunded, or fully refunded sale state. The output is explicitly labelled **not tax-valid**: it does not create or replace an SII DTE, CAF, folio, TED, or electronic signature. Keep `POINT_PILOT_RECEIPT_ENABLED` unset in normal production until a supervised physical pilot is intentionally enabled.
 
 Printing is idempotent per sale. A webhook and browser poll can confirm the same payment concurrently without creating duplicate prints. Bakery POS records `sent` when Mercado Pago accepts the action and then checks the action until Point reports `processed`; failed, canceled, or expired prints are recorded on the sale and can be retried from its details. The payment order keeps `print_on_terminal: no_ticket`, so enabling the pilot prints one customized business copy instead of both the standard seller ticket and the pilot receipt.
 

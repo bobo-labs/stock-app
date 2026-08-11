@@ -16,7 +16,7 @@ import {
   markCardSaleFailed, prepareRefund, recordCreditNote, resolveRefundInventoryReview, saveCashClosure,
   updateItem, updateSaleFromPoint, updateSalePaymentDetails,
 } from './store.js'
-import { pilotReceiptConfiguration, renderPilotReceipt } from './pilot-receipt.js'
+import { loadPilotReceiptLogo, pilotReceiptConfiguration, renderPilotReceipt } from './pilot-receipt.js'
 import { createDailyReport } from './report.js'
 
 const app = express()
@@ -208,10 +208,27 @@ async function printPilotReceipt(sale, retryFailed = false, forceReprint = false
   const claimed = await claimPilotReceiptPrint(sale.id, retryFailed, forceReprint)
   if (!claimed) return getSale(sale.id)
   try {
-    const content = await renderPilotReceipt(claimed)
     const reprinting = forceReprint && ['sent', 'printed'].includes(sale.pilotReceiptStatus)
+    const referenceSuffix = reprinting ? `-${Date.now()}` : ''
+    const logo = await loadPilotReceiptLogo()
+    if (logo) {
+      try {
+        const logoAction = await createPointPrintAction({
+          externalReference: `PILOT-LOGO-${claimed.shortId}${referenceSuffix}`,
+          subtype: 'image',
+          content: logo,
+        })
+        console.info(JSON.stringify({
+          event: 'point_pilot_receipt_logo', saleId: claimed.id, actionId: logoAction.id || null,
+          status: logoAction.status || 'created', subtype: 'image', bytes: Buffer.byteLength(logo, 'base64'),
+        }))
+      } catch (error) {
+        console.error('Point pilot receipt logo printing failed; continuing with text receipt:', error)
+      }
+    }
+    const content = await renderPilotReceipt(claimed, { logoIncluded: Boolean(logo) })
     const action = await createPointPrintAction({
-      externalReference: reprinting ? `PILOT-${claimed.shortId}-${Date.now()}` : `PILOT-${claimed.shortId}`,
+      externalReference: `PILOT-${claimed.shortId}${referenceSuffix}`,
       subtype: 'custom',
       content,
     })
