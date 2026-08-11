@@ -5,18 +5,16 @@ import compression from 'compression'
 import express from 'express'
 import { authStatus, login, logout, pointAccessIsProtected, requireAuth } from './auth.js'
 import {
-  cancelPointOrder, createPointOrder, createPointPrintAction, getConfiguredTerminal, getPointOrder, getPointPayment,
-  getPointPrintAction,
+  cancelPointOrder, createPointOrder, getConfiguredTerminal, getPointOrder, getPointPayment,
   pointConfiguration, refundPointOrder, validatePointWebhook,
 } from './mercadopago.js'
 import {
-  adjustItem, attachPointOrder, claimPilotReceiptPrint, closeStore, completePilotReceiptPrint, completeRefund,
-  createItem, createSale, deleteItem, failPilotReceiptPrint, failRefund, getSale,
+  adjustItem, attachPointOrder, closeStore, completeRefund,
+  createItem, createSale, deleteItem, failRefund, getSale,
   getSaleByPointOrder, getSalesMetrics, initializeStore, listItems, listMovements, listSales,
   markCardSaleFailed, prepareRefund, recordCreditNote, resolveRefundInventoryReview, saveCashClosure,
   updateItem, updateSaleFromPoint, updateSalePaymentDetails,
 } from './store.js'
-import { loadPilotReceiptLogo, pilotReceiptConfiguration, renderPilotReceipt } from './pilot-receipt.js'
 import { createDailyReport } from './report.js'
 
 const app = express()
@@ -179,76 +177,8 @@ async function enrichPointPayment(sale, order) {
   }
 }
 
-async function refreshPilotReceiptAction(saleId, actionId) {
-  const sale = await getSale(saleId)
-  if (!sale || ['printed', 'failed'].includes(sale.pilotReceiptStatus)) return sale
-  try {
-    const action = await getPointPrintAction(actionId)
-    if (action.status === 'processed') return completePilotReceiptPrint(saleId, action)
-    if (['failed', 'canceled', 'expired'].includes(action.status)) {
-      return failPilotReceiptPrint(saleId, `Mercado Pago reported print status: ${action.status}`)
-    }
-  } catch (error) {
-    console.error('Point pilot receipt status check failed:', error)
-  }
-  return getSale(saleId)
-}
-
-function trackPilotReceiptAction(saleId, action) {
-  if (!action?.id || action.status === 'processed') return
-  for (const delay of [2500, 8000, 20000, 45000, 90000, 150000]) {
-    const timer = setTimeout(() => refreshPilotReceiptAction(saleId, action.id).catch(console.error), delay)
-    timer.unref?.()
-  }
-}
-
-async function printPilotReceipt(sale, retryFailed = false, forceReprint = false) {
-  const printableStatus = sale?.status === 'paid' || (forceReprint && sale?.status === 'refunded')
-  if (!pilotReceiptConfiguration().enabled || sale?.paymentMethod !== 'card' || !printableStatus) return sale
-  const claimed = await claimPilotReceiptPrint(sale.id, retryFailed, forceReprint)
-  if (!claimed) return getSale(sale.id)
-  try {
-    const reprinting = forceReprint && ['sent', 'printed'].includes(sale.pilotReceiptStatus)
-    const referenceSuffix = reprinting ? `-${Date.now()}` : ''
-    const logo = await loadPilotReceiptLogo()
-    if (logo) {
-      try {
-        const logoAction = await createPointPrintAction({
-          externalReference: `PILOT-LOGO-${claimed.shortId}${referenceSuffix}`,
-          subtype: 'image',
-          content: logo,
-        })
-        console.info(JSON.stringify({
-          event: 'point_pilot_receipt_logo', saleId: claimed.id, actionId: logoAction.id || null,
-          status: logoAction.status || 'created', subtype: 'image', bytes: Buffer.byteLength(logo, 'base64'),
-        }))
-      } catch (error) {
-        console.error('Point pilot receipt logo printing failed; continuing with text receipt:', error)
-      }
-    }
-    const content = await renderPilotReceipt(claimed, { logoIncluded: Boolean(logo) })
-    const action = await createPointPrintAction({
-      externalReference: `PILOT-${claimed.shortId}${referenceSuffix}`,
-      subtype: 'custom',
-      content,
-    })
-    console.info(JSON.stringify({
-      event: 'point_pilot_receipt', saleId: claimed.id, actionId: action.id || null,
-      status: action.status || 'created', subtype: 'custom', characters: content.length,
-    }))
-    const updated = await completePilotReceiptPrint(claimed.id, action)
-    trackPilotReceiptAction(claimed.id, action)
-    return updated
-  } catch (error) {
-    await failPilotReceiptPrint(claimed.id, error.message).catch(console.error)
-    console.error('Point pilot receipt printing failed:', error)
-    return getSale(claimed.id)
-  }
-}
-
 async function completePointSaleAfterApproval(sale, order) {
-  const enriched = await enrichPointPayment(sale, order)
-  return printPilotReceipt(enriched || sale)
+  return enrichPointPayment(sale, order)
 }
 
 async function reconcilePointSale(sale, knownOrder = null) {
@@ -494,20 +424,6 @@ app.post('/api/sales/:id/reconcile-point', async (req, res, next) => {
       throw Object.assign(new Error('This sale has no Point order to synchronize.'), { status: 409 })
     }
     res.json(await reconcilePointSale(sale))
-  } catch (error) { next(error) }
-})
-app.post('/api/sales/:id/print-pilot-receipt', async (req, res, next) => {
-  try {
-    requireProtectedPoint()
-    if (!pilotReceiptConfiguration().enabled) {
-      throw Object.assign(new Error('Pilot receipt printing is not enabled.'), { status: 409 })
-    }
-    const sale = await getSale(req.params.id)
-    if (!sale) return res.status(404).json({ error: 'Sale not found.' })
-    if (sale.paymentMethod !== 'card' || !['paid', 'refunded'].includes(sale.status)) {
-      throw Object.assign(new Error('Only approved Point sales can print a receipt.'), { status: 409 })
-    }
-    res.json(await printPilotReceipt(sale, true, true))
   } catch (error) { next(error) }
 })
 app.post('/api/sales/:id/cancel', async (req, res, next) => {

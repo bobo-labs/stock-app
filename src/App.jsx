@@ -392,13 +392,13 @@ function CheckoutModal({ checkout, posConfig, onCash, onCard, onRetry, onCancelS
     {checkout.stage === 'success' && <div className="payment-result success">
       <div><BadgeCheck size={34} /></div><h3>{t('paymentApproved')}</h3><p>{sale?.paymentMethod === 'card' ? t('cardSaleCompleted') : t('cashSaleCompleted')}</p>
       <div className="success-total"><span>#{sale?.shortId}</span><strong>{formatCurrency(sale?.total || 0)}</strong></div>
-      {sale?.paymentMethod === 'card' && <div className="point-receipt-reminder"><ReceiptText size={17} /><span>{t(posConfig.pilotReceiptEnabled ? 'pilotReceiptAutomatic' : 'deliverPointReceipt')}</span></div>}
+      {sale?.paymentMethod === 'card' && <div className="point-receipt-reminder"><ReceiptText size={17} /><span>{t('deliverPointReceipt')}</span></div>}
       <button className="button primary" onClick={onClose}>{t('newSale')}</button>
     </div>}
   </Modal>
 }
 
-function SaleDetailsModal({ sale, onClose, onRefund, onRetryRefund, onCreditNote, onReconcilePoint, onPrintPilotReceipt, onResolveInventory, busy }) {
+function SaleDetailsModal({ sale, onClose, onRefund, onRetryRefund, onCreditNote, onReconcilePoint, onResolveInventory, busy }) {
   const { t, formatCurrency, formatTime, unitLabel } = useI18n()
   const [view, setView] = useState('details')
   const [quantities, setQuantities] = useState({})
@@ -476,8 +476,6 @@ function SaleDetailsModal({ sale, onClose, onRefund, onRetryRefund, onCreditNote
           <div><span>{t('netReceived')}</span><strong>{sale.mpNetReceivedAmount == null ? t('pendingData') : formatCurrency(sale.mpNetReceivedAmount)}</strong></div>
         </div>
         {pointVoucher && <div className="point-document-state"><ReceiptText size={16} /><div><strong>{t('pointVoucher')}</strong><span>{t('pointVoucherDescription')}</span></div></div>}
-        {['sent', 'printed'].includes(sale.pilotReceiptStatus) && <div className="point-document-state"><ReceiptText size={16} /><div><strong>{t(sale.pilotReceiptStatus === 'printed' ? 'pilotReceiptPrinted' : 'pilotReceiptSent')}</strong><span>#{sale.pilotReceiptActionId || sale.shortId}</span></div></div>}
-        {sale.pilotReceiptStatus === 'failed' && <div className="point-document-state refund-document-state"><AlertTriangle size={16} /><div><strong>{t('pilotReceiptFailed')}</strong><span>{sale.pilotReceiptError}</span></div><button type="button" className="button compact" onClick={() => onPrintPilotReceipt().catch(() => {})} disabled={busy}><RotateCw size={15} />{t('retryPilotReceipt')}</button></div>}
       </section>}
       <div className="sale-detail-lines">
         {sale.items.map((line) => <div key={line.lineId}><div><strong>{line.name}</strong><span>{formatQuantity(line.quantity)} {unitLabel(line.unit)} · {formatCurrency(line.unitPrice)}</span></div><b>{formatCurrency(line.lineTotal)}</b></div>)}
@@ -622,18 +620,6 @@ function SalesCounter({ items, sales, posConfig, onRefresh, setToast }) {
     } catch (error) { setToast({ type: 'error', message: error.message }); throw error }
     finally { setBusy(false) }
   }
-  const printPilotReceipt = async () => {
-    if (!selectedSale) return null
-    setBusy(true)
-    try {
-      const next = await api.printPilotReceipt(selectedSale.id)
-      setSelectedSale(next); await onRefresh()
-      const accepted = ['sent', 'printed'].includes(next.pilotReceiptStatus)
-      setToast({ type: accepted ? 'success' : 'error', message: accepted ? t(next.pilotReceiptStatus === 'printed' ? 'pilotReceiptPrinted' : 'pilotReceiptSent') : t('pilotReceiptFailed') })
-      return next
-    } catch (error) { setToast({ type: 'error', message: error.message }); throw error }
-    finally { setBusy(false) }
-  }
   const resolveRefundInventory = async (refundId, restock) => {
     if (!selectedSale) return null
     setBusy(true)
@@ -719,7 +705,7 @@ function SalesCounter({ items, sales, posConfig, onRefresh, setToast }) {
       </aside>
     </section>
     {checkout && <CheckoutModal checkout={checkout} posConfig={posConfig} onCash={payCash} onCard={payCard} onRetry={retry} onCancelSale={cancelSale} onClose={() => setCheckout(null)} busy={busy} />}
-    {selectedSale && <SaleDetailsModal sale={selectedSale} onClose={() => setSelectedSale(null)} onRefund={refundSale} onRetryRefund={retryRefund} onCreditNote={recordCreditNote} onReconcilePoint={reconcilePointSale} onPrintPilotReceipt={printPilotReceipt} onResolveInventory={resolveRefundInventory} busy={busy} />}
+    {selectedSale && <SaleDetailsModal sale={selectedSale} onClose={() => setSelectedSale(null)} onRefund={refundSale} onRetryRefund={retryRefund} onCreditNote={recordCreditNote} onReconcilePoint={reconcilePointSale} onResolveInventory={resolveRefundInventory} busy={busy} />}
   </div>
 }
 
@@ -843,32 +829,15 @@ function MetricsPage({ metrics, range, onRangeChange, onRefresh, onOpenClose, on
   </div>
 }
 
-function Activity({ movements, sales, posConfig, onPrintReceipt, printingSaleId }) {
-  const { t, formatCurrency, formatDate, formatTime } = useI18n()
+function Activity({ movements }) {
+  const { t, formatDate } = useI18n()
   const grouped = movements.reduce((acc, movement) => {
     const key = new Date(movement.createdAt).toDateString()
     acc[key] = [...(acc[key] || []), movement]
     return acc
   }, {})
-  const printableSales = sales.filter((sale) => sale.paymentMethod === 'card' && ['paid', 'refunded'].includes(sale.status))
   return <div className="page enter activity-page">
     <section className="page-heading"><div><span className="eyebrow">{t('activityTrail')}</span><h1>{t('activity')}</h1><p>{t('activityDescription')}</p></div></section>
-    <section className="card receipt-history-card">
-      <header className="card-header"><div><span className="eyebrow">Point</span><h2>{t('receiptHistory')}</h2><p>{t('receiptHistoryDescription')}</p></div></header>
-      {printableSales.length ? <div className="receipt-history-list">{printableSales.map((sale) => {
-        const state = sale.status === 'paid' && sale.refundedTotal > 0 ? { label: t('salePartiallyRefunded'), tone: 'warning' } : saleState(sale.status, t)
-        const previouslyPrinted = ['sent', 'printed'].includes(sale.pilotReceiptStatus)
-        return <article className="receipt-history-item" key={sale.id}>
-          <div className="receipt-history-icon"><ReceiptText size={19} /></div>
-          <div className="receipt-history-copy"><strong>#{sale.shortId}</strong><span>{formatTime(sale.createdAt)} · {sale.items.length} {sale.items.length === 1 ? t('item') : t('items')}</span></div>
-          <div className="receipt-history-total"><strong>{formatCurrency(sale.total)}</strong><span className={`sale-status ${state.tone}`}>{state.label}</span></div>
-          <button className="button secondary receipt-print-button" disabled={!posConfig.pilotReceiptEnabled || printingSaleId === sale.id} onClick={() => onPrintReceipt(sale)}>
-            {printingSaleId === sale.id ? <RotateCw className="spin" size={16} /> : <ReceiptText size={16} />}
-            {t(previouslyPrinted ? 'reprintReceipt' : 'printReceipt')}
-          </button>
-        </article>
-      })}</div> : <div className="activity-empty-inline"><ReceiptText size={25} /><span>{t('noReceipts')}</span></div>}
-    </section>
     <section className="card history-card"><header className="activity-section-header"><span className="eyebrow">{t('stockMovementHistory')}</span></header>{movements.length ? Object.entries(grouped).map(([day, entries]) => <div className="history-group" key={day}><h3>{new Date(day).toDateString() === new Date().toDateString() ? t('today') : formatDate(new Date(day))}</h3><div>{entries.map((movement) => <Movement movement={movement} key={movement.id} />)}</div></div>) : <div className="empty-state compact"><History size={30} /><h3>{t('noActivity')}</h3><p>{t('noActivityDescription')}</p></div>}</section>
   </div>
 }
@@ -889,7 +858,6 @@ export default function App() {
   const [modal, setModal] = useState(null)
   const [busy, setBusy] = useState(false)
   const [toast, setToast] = useState(null)
-  const [printingSaleId, setPrintingSaleId] = useState(null)
   const [mobileMenu, setMobileMenu] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => window.localStorage.getItem('bakery-sidebar') !== 'expanded')
   const [theme, setTheme] = useState(() => window.localStorage.getItem('bakery-theme') === 'dark' ? 'dark' : 'light')
@@ -987,20 +955,6 @@ export default function App() {
       setBusy(false)
     }
   }
-  const printActivityReceipt = async (sale) => {
-    setPrintingSaleId(sale.id)
-    try {
-      const updated = await api.printPilotReceipt(sale.id)
-      setSales((current) => current.map((entry) => entry.id === updated.id ? updated : entry))
-      const accepted = ['sent', 'printed'].includes(updated.pilotReceiptStatus)
-      setToast({ type: accepted ? 'success' : 'error', message: accepted ? t('receiptPrintQueued') : (updated.pilotReceiptError || t('pilotReceiptFailed')) })
-    } catch (error) {
-      if (error.status === 401) setAuth((current) => ({ ...current, authenticated: false }))
-      setToast({ type: 'error', message: error.message })
-    } finally {
-      setPrintingSaleId(null)
-    }
-  }
   const saveCashClose = async (form) => {
     setBusy(true)
     try {
@@ -1047,7 +1001,7 @@ export default function App() {
         {page === 'pos' && <SalesCounter items={items} sales={sales} posConfig={posConfig} onRefresh={refresh} setToast={setToast} />}
         {page === 'inventory' && <Inventory items={items} onAdd={() => setModal({ type: 'add' })} onAdjust={(item) => setModal({ type: 'adjust', item })} onEdit={(item) => setModal({ type: 'edit', item })} />}
         {page === 'metrics' && <MetricsPage metrics={metricsData} range={metricsRange} onRangeChange={setMetricsRange} onRefresh={() => loadMetrics(metricsRange)} onOpenClose={() => setModal({ type: 'cash-close' })} onExport={exportDailyReport} loading={metricsLoading} exporting={exportingReport} />}
-        {page === 'activity' && <Activity movements={movements} sales={sales} posConfig={posConfig} onPrintReceipt={printActivityReceipt} printingSaleId={printingSaleId} />}
+        {page === 'activity' && <Activity movements={movements} />}
       </>}
     </main>
     <nav className="bottom-nav">{nav.map(({ id, label, icon: Icon }) => <button key={id} className={page === id ? 'active' : ''} onClick={() => setPage(id)}><Icon size={20} /><span>{label}</span></button>)}</nav>

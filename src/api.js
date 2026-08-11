@@ -64,7 +64,6 @@ export const api = {
   refundSale: (id, refund) => request(`/api/sales/${id}/refunds`, { method: 'POST', body: JSON.stringify(refund) }),
   retryRefund: (saleId, refundId) => request(`/api/sales/${saleId}/refunds/${refundId}/retry`, { method: 'POST' }),
   reconcilePointSale: (saleId) => request(`/api/sales/${saleId}/reconcile-point`, { method: 'POST' }),
-  printPilotReceipt: (saleId) => request(`/api/sales/${saleId}/print-pilot-receipt`, { method: 'POST' }),
   resolveRefundInventory: (saleId, refundId, restock) => request(`/api/sales/${saleId}/refunds/${refundId}/inventory-review`, { method: 'PATCH', body: JSON.stringify({ restock }) }),
   recordCreditNote: (saleId, refundId, creditNote) => request(`/api/sales/${saleId}/refunds/${refundId}/credit-note`, { method: 'PATCH', body: JSON.stringify(creditNote) }),
 }

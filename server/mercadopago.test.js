@@ -122,7 +122,6 @@ test('Point adapter follows the documented Orders API contract', async () => {
       terminalConfigured: true,
       webhookConfigured: true,
       terminalLabel: 'X0000001',
-      pilotReceiptEnabled: false,
     })
 
     assert.deepEqual(await point.getConfiguredTerminal(), {
@@ -143,13 +142,6 @@ test('Point adapter follows the documented Orders API contract', async () => {
       id: 'refund-uuid-1', amount: 1850, full: false,
     })
     assert.equal(refunded.status_detail, 'partially_refunded')
-    const printContent = '{center}{w}{b}COMPROBANTE PILOTO{/b}{/w}{br}{s}Venta SALE0001{/s}{br}{s}Documento demostrativo no tributario{/s}{br}{/center}'
-    const print = await point.createPointPrintAction({
-      externalReference: 'PILOT-SALE0001', subtype: 'custom', content: printContent,
-    })
-    assert.equal(print.id, 'PRINT-ACTION-1')
-    assert.equal((await point.getPointPrintAction(print.id)).status, 'processed')
-
     assert.deepEqual(requests.map(({ method, url }) => ({ method, url })), [
       { method: 'GET', url: '/terminals/v1/list?limit=50&offset=0' },
       { method: 'POST', url: '/v1/orders' },
@@ -157,19 +149,12 @@ test('Point adapter follows the documented Orders API contract', async () => {
       { method: 'GET', url: '/v1/payments/172570565606' },
       { method: 'POST', url: '/v1/orders/ORD-MOCK-1/cancel' },
       { method: 'POST', url: '/v1/orders/ORD-MOCK-1/refund' },
-      { method: 'POST', url: '/terminals/v1/actions' },
-      { method: 'GET', url: '/terminals/v1/actions/PRINT-ACTION-1' },
     ])
     assert.ok(requests.every((request) => request.authorization === 'Bearer test-access-token'))
     assert.equal(requests[1].idempotencyKey, sale.id)
     assert.match(requests[4].idempotencyKey, /^[0-9a-f]{8}-[0-9a-f-]{27}$/i)
     assert.equal(requests[5].idempotencyKey, 'refund-uuid-1')
-    assert.equal(requests[6].idempotencyKey, 'print-PILOT-SALE0001')
     assert.deepEqual(requests[5].body, { transactions: [{ id: 'PAY-MOCK-1', amount: '1850' }] })
-    assert.deepEqual(requests[6].body, {
-      type: 'print', external_reference: 'PILOT-SALE0001',
-      config: { point: { terminal_id: terminalId, subtype: 'custom' } }, content: printContent,
-    })
     assert.deepEqual(requests[1].body, {
       type: 'point',
       external_reference: sale.mpExternalReference,
