@@ -137,6 +137,22 @@ export async function createPointPrintAction({ externalReference, content, subty
   if (!['custom', 'image'].includes(subtype)) {
     throw Object.assign(new Error('Unsupported Point print subtype.'), { status: 400 })
   }
+  if (subtype === 'custom') {
+    const length = typeof content === 'string' ? content.length : 0
+    const supportedTag = /\{(?:b|w|s|br|left|center|qr|pdf417)\}/
+    if (length < 100 || length > 4096 || !supportedTag.test(content)) {
+      throw Object.assign(new Error('Point custom print content must contain a supported formatting tag and be between 100 and 4096 characters.'), { status: 400 })
+    }
+  }
+  if (subtype === 'image') {
+    const base64 = typeof content === 'string' ? content.replace(/\s/g, '') : ''
+    const image = base64 && /^[A-Za-z0-9+/]+={0,2}$/.test(base64) ? Buffer.from(base64, 'base64') : Buffer.alloc(0)
+    const png = image.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
+    const jpeg = image.length >= 3 && image[0] === 0xff && image[1] === 0xd8 && image[2] === 0xff
+    if ((!png && !jpeg) || image.length > 1024 * 1024) {
+      throw Object.assign(new Error('Point image print content must be a PNG or JPEG encoded as Base64 and no larger than 1 MB.'), { status: 400 })
+    }
+  }
 
   if (mockMode) {
     return {

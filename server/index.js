@@ -185,7 +185,7 @@ async function refreshPilotReceiptAction(saleId, actionId) {
   try {
     const action = await getPointPrintAction(actionId)
     if (action.status === 'processed') return completePilotReceiptPrint(saleId, action)
-    if (['failed', 'canceled'].includes(action.status)) {
+    if (['failed', 'canceled', 'expired'].includes(action.status)) {
       return failPilotReceiptPrint(saleId, `Mercado Pago reported print status: ${action.status}`)
     }
   } catch (error) {
@@ -196,7 +196,7 @@ async function refreshPilotReceiptAction(saleId, actionId) {
 
 function trackPilotReceiptAction(saleId, action) {
   if (!action?.id || action.status === 'processed') return
-  for (const delay of [2500, 8000, 20000]) {
+  for (const delay of [2500, 8000, 20000, 45000, 90000, 150000]) {
     const timer = setTimeout(() => refreshPilotReceiptAction(saleId, action.id).catch(console.error), delay)
     timer.unref?.()
   }
@@ -212,12 +212,12 @@ async function printPilotReceipt(sale, retryFailed = false, forceReprint = false
     const reprinting = forceReprint && ['sent', 'printed'].includes(sale.pilotReceiptStatus)
     const action = await createPointPrintAction({
       externalReference: reprinting ? `PILOT-${claimed.shortId}-${Date.now()}` : `PILOT-${claimed.shortId}`,
-      subtype: 'image',
+      subtype: 'custom',
       content,
     })
     console.info(JSON.stringify({
       event: 'point_pilot_receipt', saleId: claimed.id, actionId: action.id || null,
-      status: action.status || 'created', bytes: Buffer.byteLength(content, 'base64'),
+      status: action.status || 'created', subtype: 'custom', characters: content.length,
     }))
     const updated = await completePilotReceiptPrint(claimed.id, action)
     trackPilotReceiptAction(claimed.id, action)

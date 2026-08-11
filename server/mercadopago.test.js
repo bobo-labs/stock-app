@@ -143,8 +143,9 @@ test('Point adapter follows the documented Orders API contract', async () => {
       id: 'refund-uuid-1', amount: 1850, full: false,
     })
     assert.equal(refunded.status_detail, 'partially_refunded')
+    const printContent = '{center}{w}{b}COMPROBANTE PILOTO{/b}{/w}{br}{s}Venta SALE0001{/s}{br}{s}Documento demostrativo no tributario{/s}{br}{/center}'
     const print = await point.createPointPrintAction({
-      externalReference: 'PILOT-SALE0001', subtype: 'image', content: 'iVBORw0KGgo=',
+      externalReference: 'PILOT-SALE0001', subtype: 'custom', content: printContent,
     })
     assert.equal(print.id, 'PRINT-ACTION-1')
     assert.equal((await point.getPointPrintAction(print.id)).status, 'processed')
@@ -167,7 +168,7 @@ test('Point adapter follows the documented Orders API contract', async () => {
     assert.deepEqual(requests[5].body, { transactions: [{ id: 'PAY-MOCK-1', amount: '1850' }] })
     assert.deepEqual(requests[6].body, {
       type: 'print', external_reference: 'PILOT-SALE0001',
-      config: { point: { terminal_id: terminalId, subtype: 'image' } }, content: 'iVBORw0KGgo=',
+      config: { point: { terminal_id: terminalId, subtype: 'custom' } }, content: printContent,
     })
     assert.deepEqual(requests[1].body, {
       type: 'point',
