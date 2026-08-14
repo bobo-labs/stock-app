@@ -1,5 +1,6 @@
 import crypto from 'node:crypto'
 import { WebhookSignatureValidator } from 'mercadopago'
+import { renderPointRefundCopy } from './refund-receipt.js'
 
 const apiBase = process.env.MERCADOPAGO_API_BASE || 'https://api.mercadopago.com'
 const mockMode = process.env.MERCADOPAGO_MOCK === 'true'
@@ -14,6 +15,10 @@ function credentials() {
 
 function configurationError() {
   return Object.assign(new Error('Mercado Pago is not configured. Add the access token and Point terminal ID in Railway.'), { status: 503 })
+}
+
+function accountConfigurationError() {
+  return Object.assign(new Error('Mercado Pago account management is not configured. Add the server-side access token in Railway.'), { status: 503 })
 }
 
 async function mercadoPagoRequest(endpoint, { method = 'GET', body, idempotencyKey, uncertainMessage } = {}) {
@@ -50,6 +55,170 @@ async function mercadoPagoRequest(endpoint, { method = 'GET', body, idempotencyK
     })
   }
   return data
+}
+
+function accountIdFromMe(account) {
+  const id = account?.id ?? account?.user_id
+  if (!id) throw Object.assign(new Error('Mercado Pago did not return the seller account ID.'), { status: 502 })
+  return String(id)
+}
+
+function queryString(values) {
+  const query = new URLSearchParams()
+  for (const [key, value] of Object.entries(values)) {
+    if (value !== undefined && value !== null && String(value).trim() !== '') query.set(key, String(value))
+  }
+  const encoded = query.toString()
+  return encoded ? `?${encoded}` : ''
+}
+
+function collection(data, keys) {
+  for (const key of keys) {
+    if (Array.isArray(data?.[key])) return data[key]
+    if (Array.isArray(data?.data?.[key])) return data.data[key]
+  }
+  if (Array.isArray(data?.results)) return data.results
+  if (Array.isArray(data?.data)) return data.data
+  return []
+}
+
+function requireAccountAccess() {
+  if (!mockMode && !credentials().accessToken) throw accountConfigurationError()
+}
+
+function cleanStorePayload(input = {}) {
+  const location = input.location || {}
+  const payload = {
+    name: String(input.name || '').trim(),
+    external_id: String(input.external_id || input.externalId || '').trim(),
+    location: {},
+  }
+  for (const key of ['street_name', 'street_number', 'city_name', 'state_name', 'zip_code', 'reference']) {
+    const value = location[key] ?? input[key]
+    if (value !== undefined && value !== null && String(value).trim()) payload.location[key] = String(value).trim()
+  }
+  for (const key of ['latitude', 'longitude']) {
+    const value = location[key] ?? input[key]
+    if (value !== undefined && value !== null && String(value).trim()) payload.location[key] = Number(value)
+  }
+  if (!Object.keys(payload.location).length) delete payload.location
+  return payload
+}
+
+function cleanPosPayload(input = {}) {
+  const payload = {
+    name: String(input.name || '').trim(),
+    external_id: String(input.external_id || input.externalId || '').trim(),
+  }
+  for (const [key, value] of Object.entries({
+    store_id: input.store_id ?? input.storeId,
+    external_store_id: input.external_store_id ?? input.externalStoreId,
+    category: input.category,
+    url: input.url,
+  })) {
+    if (value !== undefined && value !== null && String(value).trim()) payload[key] = String(value).trim()
+  }
+  if (input.fixed_amount !== undefined || input.fixedAmount !== undefined) payload.fixed_amount = Boolean(input.fixed_amount ?? input.fixedAmount)
+  return payload
+}
+
+export async function getMercadoPagoAccount() {
+  requireAccountAccess()
+  if (mockMode) return { id: 'MOCK-SELLER', nickname: 'MOCK_SELLER', site_id: 'MLC' }
+  return mercadoPagoRequest('/users/me')
+}
+
+export async function listPointStores(filters = {}) {
+  const account = await getMercadoPagoAccount()
+  if (mockMode) return { stores: [], paging: { total: 0, limit: 50, offset: 0 }, account }
+  const userId = accountIdFromMe(account)
+  const response = await mercadoPagoRequest(`/users/${encodeURIComponent(userId)}/stores/search${queryString({ external_id: filters.externalId, limit: filters.limit || 50, offset: filters.offset || 0 })}`)
+  return { stores: collection(response, ['stores']), paging: response?.paging || response?.data?.paging || {}, account }
+}
+
+export async function createPointStore(input) {
+  const account = await getMercadoPagoAccount()
+  if (mockMode) return { id: `MOCK-STORE-${Date.now()}`, ...cleanStorePayload(input) }
+  const userId = accountIdFromMe(account)
+  return mercadoPagoRequest(`/users/${encodeURIComponent(userId)}/stores`, {
+    method: 'POST', idempotencyKey: crypto.randomUUID(), body: cleanStorePayload(input),
+  })
+}
+
+export async function getPointStore(storeId) {
+  await getMercadoPagoAccount()
+  if (mockMode) return { id: storeId, name: 'Mock store' }
+  return mercadoPagoRequest(`/stores/${encodeURIComponent(storeId)}`)
+}
+
+export async function updatePointStore(storeId, input) {
+  const account = await getMercadoPagoAccount()
+  if (mockMode) return { id: storeId, ...cleanStorePayload(input) }
+  const userId = accountIdFromMe(account)
+  return mercadoPagoRequest(`/users/${encodeURIComponent(userId)}/stores/${encodeURIComponent(storeId)}`, {
+    method: 'PUT', idempotencyKey: crypto.randomUUID(), body: cleanStorePayload(input),
+  })
+}
+
+export async function deletePointStore(storeId) {
+  const account = await getMercadoPagoAccount()
+  if (mockMode) return { id: storeId, deleted: true }
+  const userId = accountIdFromMe(account)
+  return mercadoPagoRequest(`/users/${encodeURIComponent(userId)}/stores/${encodeURIComponent(storeId)}`, {
+    method: 'DELETE', idempotencyKey: crypto.randomUUID(),
+  })
+}
+
+export async function listPointPos(filters = {}) {
+  await getMercadoPagoAccount()
+  if (mockMode) return { registers: [], paging: { total: 0, limit: 50, offset: 0 } }
+  const response = await mercadoPagoRequest(`/pos${queryString({
+    external_id: filters.externalId, external_store_id: filters.externalStoreId, store_id: filters.storeId,
+    limit: filters.limit || 50, offset: filters.offset || 0,
+  })}`)
+  return { registers: collection(response, ['pos', 'points_of_sale']), paging: response?.paging || response?.data?.paging || {} }
+}
+
+export async function createPointPos(input) {
+  await getMercadoPagoAccount()
+  if (mockMode) return { id: `MOCK-POS-${Date.now()}`, ...cleanPosPayload(input) }
+  return mercadoPagoRequest('/pos', { method: 'POST', idempotencyKey: crypto.randomUUID(), body: cleanPosPayload(input) })
+}
+
+export async function getPointPos(posId) {
+  await getMercadoPagoAccount()
+  if (mockMode) return { id: posId, name: 'Mock POS' }
+  return mercadoPagoRequest(`/pos/${encodeURIComponent(posId)}`)
+}
+
+export async function updatePointPos(posId, input) {
+  await getMercadoPagoAccount()
+  if (mockMode) return { id: posId, ...cleanPosPayload(input) }
+  return mercadoPagoRequest(`/pos/${encodeURIComponent(posId)}`, {
+    method: 'PUT', idempotencyKey: crypto.randomUUID(), body: cleanPosPayload(input),
+  })
+}
+
+export async function deletePointPos(posId) {
+  await getMercadoPagoAccount()
+  if (mockMode) return { id: posId, deleted: true }
+  return mercadoPagoRequest(`/pos/${encodeURIComponent(posId)}`, { method: 'DELETE', idempotencyKey: crypto.randomUUID() })
+}
+
+export async function listPointTerminals(filters = {}) {
+  await getMercadoPagoAccount()
+  if (mockMode) return { terminals: [{ id: 'MOCK_POINT_SMART_2', operating_mode: 'PDV', connected: true }], paging: { total: 1 } }
+  const response = await mercadoPagoRequest(`/terminals/v1/list${queryString({ limit: filters.limit || 50, offset: filters.offset || 0, store_id: filters.storeId, pos_id: filters.posId })}`)
+  return { terminals: collection(response, ['terminals']), paging: response?.paging || response?.data?.paging || {} }
+}
+
+export async function setupPointTerminal(terminalId, operatingMode) {
+  await getMercadoPagoAccount()
+  if (!['PDV', 'STANDALONE'].includes(operatingMode)) throw Object.assign(new Error('The terminal mode is invalid.'), { status: 400 })
+  if (mockMode) return { terminals: [{ id: terminalId, operating_mode: operatingMode }] }
+  return mercadoPagoRequest('/terminals/v1/setup', {
+    method: 'PATCH', idempotencyKey: crypto.randomUUID(), body: { terminals: [{ id: terminalId, operating_mode: operatingMode }] },
+  })
 }
 
 function mockOrder(sale, status = 'created') {
@@ -176,6 +345,41 @@ export async function refundPointOrder(orderId, sale, refund) {
         id: sale.mpPaymentId,
         amount: String(Math.round(refund.amount)),
       }],
+    },
+  })
+}
+
+export async function printPointRefundCopy(sale, refund) {
+  const { terminalId } = credentials()
+  if (!terminalId && !mockMode) throw configurationError()
+  if (sale.paymentMethod !== 'card' || refund.status !== 'processed') {
+    throw Object.assign(new Error('Only a processed Point refund can be printed.'), { status: 409 })
+  }
+
+  const requestId = crypto.randomUUID()
+  const saleReference = String(sale.shortId || sale.id || 'SALE').replace(/[^a-z0-9_-]/gi, '').slice(0, 16).replace(/[-_]+$/g, '') || 'SALE'
+  const refundReference = String(refund.id || 'REFUND').replace(/[^a-z0-9_-]/gi, '').slice(0, 12).replace(/[-_]+$/g, '') || 'REFUND'
+  const externalReference = `REFUND-${saleReference}-${refundReference}-${requestId.slice(0, 8)}`.slice(0, 64)
+  const content = renderPointRefundCopy(sale, refund)
+
+  if (mockMode) {
+    return {
+      id: `MOCK-PRINT-${requestId}`,
+      type: 'print',
+      external_reference: externalReference,
+      status: 'processed',
+    }
+  }
+
+  return mercadoPagoRequest('/terminals/v1/actions', {
+    method: 'POST',
+    idempotencyKey: requestId,
+    uncertainMessage: 'Mercado Pago did not confirm the refund-copy print. Check the terminal before trying again.',
+    body: {
+      type: 'print',
+      external_reference: externalReference,
+      config: { point: { terminal_id: terminalId, subtype: 'custom' } },
+      content,
     },
   })
 }

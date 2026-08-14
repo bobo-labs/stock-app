@@ -5,8 +5,10 @@ import compression from 'compression'
 import express from 'express'
 import { authStatus, login, logout, pointAccessIsProtected, requireAuth } from './auth.js'
 import {
-  cancelPointOrder, createPointOrder, getConfiguredTerminal, getPointOrder, getPointPayment,
-  pointConfiguration, refundPointOrder, validatePointWebhook,
+  cancelPointOrder, createPointOrder, createPointPos, createPointStore, deletePointPos, deletePointStore,
+  getConfiguredTerminal, getMercadoPagoAccount, getPointOrder, getPointPayment, getPointPos, getPointStore,
+  listPointPos, listPointStores, listPointTerminals, pointConfiguration, printPointRefundCopy, refundPointOrder,
+  setupPointTerminal, updatePointPos, updatePointStore, validatePointWebhook,
 } from './mercadopago.js'
 import {
   adjustItem, attachPointOrder, closeStore, completeRefund,
@@ -163,6 +165,43 @@ function logPointTiming(requestId, sale, outcome, timings) {
     outcome,
     timings,
   }))
+}
+
+function requireMercadoPagoAdmin() {
+  if (!process.env.MERCADOPAGO_ACCESS_TOKEN && process.env.MERCADOPAGO_MOCK !== 'true') {
+    throw Object.assign(new Error('Mercado Pago account management is not configured yet.'), { status: 503 })
+  }
+}
+
+function cleanPointStoreInput(body = {}) {
+  const name = String(body.name || '').trim()
+  const externalId = String(body.external_id || body.externalId || '').trim()
+  if (!name || name.length > 120) throw badRequest('A store name between 1 and 120 characters is required.')
+  if (externalId.length > 60) throw badRequest('The store external ID is too long.')
+  const location = body.location && typeof body.location === 'object' ? body.location : {}
+  return {
+    name,
+    external_id: externalId,
+    location: Object.fromEntries(Object.entries(location).filter(([key, value]) => [
+      'street_name', 'street_number', 'city_name', 'state_name', 'zip_code', 'reference', 'latitude', 'longitude',
+    ].includes(key) && value !== null && value !== undefined && String(value).trim() !== '')),
+  }
+}
+
+function cleanPointPosInput(body = {}) {
+  const name = String(body.name || '').trim()
+  const externalId = String(body.external_id || body.externalId || '').trim()
+  if (!name || name.length > 120) throw badRequest('A POS name between 1 and 120 characters is required.')
+  if (externalId.length > 60) throw badRequest('The POS external ID is too long.')
+  return {
+    name,
+    external_id: externalId,
+    store_id: body.store_id ? String(body.store_id).trim() : undefined,
+    external_store_id: body.external_store_id ? String(body.external_store_id).trim() : undefined,
+    category: body.category ? String(body.category).trim().slice(0, 80) : undefined,
+    url: body.url ? String(body.url).trim().slice(0, 500) : undefined,
+    fixed_amount: body.fixed_amount === undefined ? undefined : Boolean(body.fixed_amount),
+  }
 }
 
 async function enrichPointPayment(sale, order) {
@@ -489,10 +528,75 @@ app.patch('/api/sales/:saleId/refunds/:refundId/inventory-review', async (req, r
     res.json(sale)
   } catch (error) { next(error) }
 })
+app.post('/api/sales/:saleId/refunds/:refundId/print-copy', async (req, res, next) => {
+  try {
+    requireProtectedPoint()
+    const sale = await getSale(req.params.saleId)
+    if (!sale) return res.status(404).json({ error: 'Sale not found.' })
+    const refund = sale.refunds.find((entry) => entry.id === req.params.refundId)
+    if (!refund) return res.status(404).json({ error: 'Refund not found.' })
+    if (sale.paymentMethod !== 'card' || refund.status !== 'processed') {
+      throw Object.assign(new Error('Only a processed Point refund can be printed.'), { status: 409 })
+    }
+    res.status(202).json(await printPointRefundCopy(sale, refund))
+  } catch (error) { next(error) }
+})
 
 app.get('/api/pos/config', (_req, res) => res.json(pointConfiguration()))
 app.get('/api/pos/terminal', async (_req, res, next) => {
   try { requireProtectedPoint(); res.json(await getConfiguredTerminal()) } catch (error) { next(error) }
+})
+app.get('/api/pos/management', async (_req, res, next) => {
+  try {
+    requireMercadoPagoAdmin()
+    const [account, stores, registers, terminals] = await Promise.all([
+      getMercadoPagoAccount(), listPointStores(), listPointPos(), listPointTerminals(),
+    ])
+    res.json({ account, stores: stores.stores, storePaging: stores.paging, registers: registers.registers, registerPaging: registers.paging, terminals: terminals.terminals, terminalPaging: terminals.paging })
+  } catch (error) { next(error) }
+})
+app.get('/api/pos/stores', async (req, res, next) => {
+  try { requireMercadoPagoAdmin(); res.json(await listPointStores({ externalId: req.query.external_id, limit: req.query.limit, offset: req.query.offset })) } catch (error) { next(error) }
+})
+app.post('/api/pos/stores', async (req, res, next) => {
+  try { requireMercadoPagoAdmin(); res.status(201).json(await createPointStore(cleanPointStoreInput(req.body))) } catch (error) { next(error) }
+})
+app.get('/api/pos/stores/:storeId', async (req, res, next) => {
+  try { requireMercadoPagoAdmin(); res.json(await getPointStore(req.params.storeId)) } catch (error) { next(error) }
+})
+app.put('/api/pos/stores/:storeId', async (req, res, next) => {
+  try { requireMercadoPagoAdmin(); res.json(await updatePointStore(req.params.storeId, cleanPointStoreInput(req.body))) } catch (error) { next(error) }
+})
+app.delete('/api/pos/stores/:storeId', async (req, res, next) => {
+  try { requireMercadoPagoAdmin(); res.json(await deletePointStore(req.params.storeId)) } catch (error) { next(error) }
+})
+app.get('/api/pos/registers', async (req, res, next) => {
+  try {
+    requireMercadoPagoAdmin()
+    res.json(await listPointPos({ externalId: req.query.external_id, externalStoreId: req.query.external_store_id, storeId: req.query.store_id, limit: req.query.limit, offset: req.query.offset }))
+  } catch (error) { next(error) }
+})
+app.post('/api/pos/registers', async (req, res, next) => {
+  try { requireMercadoPagoAdmin(); res.status(201).json(await createPointPos(cleanPointPosInput(req.body))) } catch (error) { next(error) }
+})
+app.get('/api/pos/registers/:registerId', async (req, res, next) => {
+  try { requireMercadoPagoAdmin(); res.json(await getPointPos(req.params.registerId)) } catch (error) { next(error) }
+})
+app.put('/api/pos/registers/:registerId', async (req, res, next) => {
+  try { requireMercadoPagoAdmin(); res.json(await updatePointPos(req.params.registerId, cleanPointPosInput(req.body))) } catch (error) { next(error) }
+})
+app.delete('/api/pos/registers/:registerId', async (req, res, next) => {
+  try { requireMercadoPagoAdmin(); res.json(await deletePointPos(req.params.registerId)) } catch (error) { next(error) }
+})
+app.get('/api/pos/terminals', async (req, res, next) => {
+  try { requireMercadoPagoAdmin(); res.json(await listPointTerminals({ storeId: req.query.store_id, posId: req.query.pos_id, limit: req.query.limit, offset: req.query.offset })) } catch (error) { next(error) }
+})
+app.patch('/api/pos/terminals/:terminalId/mode', async (req, res, next) => {
+  try {
+    requireMercadoPagoAdmin()
+    const mode = String(req.body?.operating_mode || '').toUpperCase()
+    res.json(await setupPointTerminal(req.params.terminalId, mode))
+  } catch (error) { next(error) }
 })
 
 app.use('/api', (_req, res) => res.status(404).json({ error: 'API route not found.' }))

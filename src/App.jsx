@@ -5,7 +5,7 @@ import {
   Boxes, CakeSlice, Calculator, CalendarClock, Check, ChevronRight, CirclePlus, Clock3, Coffee, CreditCard, Download,
   Croissant, FileCheck2, History, LayoutDashboard, LineChart, LockKeyhole, LogOut, Menu, Minus, Moon, PanelLeftClose,
   PackageOpen, Pencil, Plus, ReceiptText, RotateCw, Search, ShoppingBasket,
-  SlidersHorizontal, Sparkles, Sun, TrendingDown, TrendingUp, Trash2, Undo2, WalletCards, Wheat, Wifi, X,
+  Settings, SlidersHorizontal, Sparkles, Store, Sun, TrendingDown, TrendingUp, Trash2, Undo2, WalletCards, Wheat, Wifi, X,
 } from 'lucide-react'
 import { api } from './api.js'
 import { dateOnly, parseCalendarDate } from './dates.js'
@@ -398,7 +398,7 @@ function CheckoutModal({ checkout, posConfig, onCash, onCard, onRetry, onCancelS
   </Modal>
 }
 
-function SaleDetailsModal({ sale, onClose, onRefund, onRetryRefund, onCreditNote, onReconcilePoint, onResolveInventory, busy }) {
+function SaleDetailsModal({ sale, onClose, onRefund, onRetryRefund, onPrintRefundCopy, onCreditNote, onReconcilePoint, onResolveInventory, busy }) {
   const { t, formatCurrency, formatTime, unitLabel } = useI18n()
   const [view, setView] = useState('details')
   const [quantities, setQuantities] = useState({})
@@ -485,6 +485,7 @@ function SaleDetailsModal({ sale, onClose, onRefund, onRetryRefund, onCreditNote
         <div><strong>{formatCurrency(refund.amount)}</strong><span>{refund.status === 'processed' ? t('refundCompleted') : refund.status === 'pending' ? t('refundPending') : t('refundFailed')}</span>{refund.reason && <small>{refund.reason}</small>}</div>
         <div className="refund-actions">
           {refund.status === 'pending' && sale.paymentMethod === 'card' && <button className="button compact" onClick={() => onRetryRefund(refund.id).catch(() => {})} disabled={busy}><RotateCw size={15} />{t('retryRefund')}</button>}
+          {refund.status === 'processed' && sale.paymentMethod === 'card' && <button className="button compact" onClick={() => onPrintRefundCopy(refund.id).catch(() => {})} disabled={busy}><ReceiptText size={15} />{t('printRefundCopy')}</button>}
           {refund.inventoryReviewStatus === 'pending' && <div className="inventory-review-actions"><span><AlertTriangle size={14} />{t('inventoryReviewPending')}</span>{refund.items.length > 0 && <button className="button compact" onClick={() => onResolveInventory(refund.id, true).catch(() => {})} disabled={busy}><PackageOpen size={15} />{t('restockProducts')}</button>}<button className="button compact" onClick={() => onResolveInventory(refund.id, false).catch(() => {})} disabled={busy}><Check size={15} />{t('doNotRestock')}</button></div>}
           {refund.creditNote?.status === 'pending' && <button className="button compact" onClick={() => openCreditNote(refund)}><FileCheck2 size={15} />{t('recordCreditNote')}</button>}
           {refund.creditNote?.status === 'issued' && <span className="credit-note-state issued"><FileCheck2 size={15} />{t('creditNoteIssued')} · N° {refund.creditNote.folio}</span>}
@@ -610,6 +611,16 @@ function SalesCounter({ items, sales, posConfig, onRefresh, setToast }) {
     } catch (error) { setToast({ type: 'error', message: error.message }); throw error }
     finally { setBusy(false) }
   }
+  const printRefundCopy = async (refundId) => {
+    if (!selectedSale) return null
+    setBusy(true)
+    try {
+      const action = await api.printRefundCopy(selectedSale.id, refundId)
+      setToast({ type: 'success', message: t('refundCopyQueued') })
+      return action
+    } catch (error) { setToast({ type: 'error', message: error.message }); throw error }
+    finally { setBusy(false) }
+  }
   const reconcilePointSale = async () => {
     if (!selectedSale) return null
     setBusy(true)
@@ -705,7 +716,7 @@ function SalesCounter({ items, sales, posConfig, onRefresh, setToast }) {
       </aside>
     </section>
     {checkout && <CheckoutModal checkout={checkout} posConfig={posConfig} onCash={payCash} onCard={payCard} onRetry={retry} onCancelSale={cancelSale} onClose={() => setCheckout(null)} busy={busy} />}
-    {selectedSale && <SaleDetailsModal sale={selectedSale} onClose={() => setSelectedSale(null)} onRefund={refundSale} onRetryRefund={retryRefund} onCreditNote={recordCreditNote} onReconcilePoint={reconcilePointSale} onResolveInventory={resolveRefundInventory} busy={busy} />}
+    {selectedSale && <SaleDetailsModal sale={selectedSale} onClose={() => setSelectedSale(null)} onRefund={refundSale} onRetryRefund={retryRefund} onPrintRefundCopy={printRefundCopy} onCreditNote={recordCreditNote} onReconcilePoint={reconcilePointSale} onResolveInventory={resolveRefundInventory} busy={busy} />}
   </div>
 }
 
@@ -840,6 +851,70 @@ function Activity({ movements }) {
     <section className="page-heading"><div><span className="eyebrow">{t('activityTrail')}</span><h1>{t('activity')}</h1><p>{t('activityDescription')}</p></div></section>
     <section className="card history-card"><header className="activity-section-header"><span className="eyebrow">{t('stockMovementHistory')}</span></header>{movements.length ? Object.entries(grouped).map(([day, entries]) => <div className="history-group" key={day}><h3>{new Date(day).toDateString() === new Date().toDateString() ? t('today') : formatDate(new Date(day))}</h3><div>{entries.map((movement) => <Movement movement={movement} key={movement.id} />)}</div></div>) : <div className="empty-state compact"><History size={30} /><h3>{t('noActivity')}</h3><p>{t('noActivityDescription')}</p></div>}</section>
   </div>
+}
+
+function MercadoPagoSettings({ setToast }) {
+  const { t } = useI18n()
+  const [data, setData] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [editor, setEditor] = useState(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  const load = useCallback(async () => {
+    setLoading(true); setError('')
+    try { setData(await api.posManagement()) } catch (nextError) { setError(nextError.message) } finally { setLoading(false) }
+  }, [])
+  useEffect(() => { load() }, [load])
+
+  const run = async (action, successMessage) => {
+    setBusy(true)
+    try { await action(); await load(); setEditor(null); setToast({ type: 'success', message: successMessage }) }
+    catch (nextError) { setToast({ type: 'error', message: nextError.message }) }
+    finally { setBusy(false) }
+  }
+  const remove = (kind, entry) => {
+    const name = entry.name || entry.id
+    if (!window.confirm(t('deleteMpResourceQuestion', { name }))) return
+    const action = kind === 'store' ? () => api.deletePointStore(entry.id) : () => api.deletePointRegister(entry.id)
+    run(action, t('mpResourceDeleted', { name }))
+  }
+  const changeMode = (terminal) => {
+    const nextMode = terminal.operating_mode === 'PDV' ? 'STANDALONE' : 'PDV'
+    if (!window.confirm(t('changeTerminalModeQuestion', { mode: nextMode }))) return
+    run(() => api.setPointTerminalMode(terminal.id, nextMode), t('terminalModeUpdated', { mode: nextMode }))
+  }
+
+  if (loading && !data) return <div className="page enter"><div className="loading"><div className="loader-mark"><Settings size={26} /></div><span>{t('loadingMpSettings')}</span></div></div>
+  return <div className="page enter settings-page">
+    <section className="page-heading"><div><span className="eyebrow">{t('mpSettingsEyebrow')}</span><h1>{t('mpSettings')}</h1><p>{t('mpSettingsDescription')}</p></div><button className="button secondary compact" onClick={load} disabled={loading}><RotateCw size={16} />{t('refreshSettings')}</button></section>
+    {error && <div className="inline-error settings-error"><AlertTriangle size={16} />{error}</div>}
+    {data && <>
+      <section className="settings-account card"><div className="metric-icon"><WalletCards size={20} /></div><div><span className="eyebrow">{t('mpAccount')}</span><strong>{data.account?.nickname || t('sellerAccount')}</strong><small>{t('sellerId')}: {data.account?.id || '—'} · {t('site')}: {data.account?.site_id || '—'}</small></div></section>
+      <div className="settings-grid">
+        <section className="card settings-card"><header className="card-header"><div><span className="eyebrow">{t('branches')}</span><h2>{t('branchesTitle')}</h2></div><button className="button primary compact" onClick={() => setEditor({ type: 'store' })}><Plus size={16} />{t('newBranch')}</button></header><div className="settings-list">{data.stores?.length ? data.stores.map((store) => <article className="settings-row" key={store.id}><div className="settings-row-icon"><Store size={18} /></div><div><strong>{store.name || store.id}</strong><small>{store.external_id || store.id}{store.location?.city_name ? ` · ${store.location.city_name}` : ''}</small></div><div className="row-actions"><button className="icon-button subtle" onClick={() => setEditor({ type: 'store', entry: store })} aria-label={t('edit')} title={t('edit')}><Pencil size={16} /></button><button className="icon-button subtle danger-icon" onClick={() => remove('store', store)} aria-label={t('delete')} title={t('delete')}><Trash2 size={16} /></button></div></article>) : <div className="settings-empty"><Store size={22} /><span>{t('noBranches')}</span></div>}</div></section>
+        <section className="card settings-card"><header className="card-header"><div><span className="eyebrow">{t('cashRegisters')}</span><h2>{t('cashRegistersTitle')}</h2></div><button className="button primary compact" onClick={() => setEditor({ type: 'register' })}><Plus size={16} />{t('newCashRegister')}</button></header><div className="settings-list">{data.registers?.length ? data.registers.map((register) => <article className="settings-row" key={register.id}><div className="settings-row-icon"><Monitor size={18} /></div><div><strong>{register.name || register.id}</strong><small>{register.external_id || register.id}{register.store_id ? ` · ${t('storeId')}: ${register.store_id}` : ''}</small></div><div className="row-actions"><button className="icon-button subtle" onClick={() => setEditor({ type: 'register', entry: register })} aria-label={t('edit')} title={t('edit')}><Pencil size={16} /></button><button className="icon-button subtle danger-icon" onClick={() => remove('register', register)} aria-label={t('delete')} title={t('delete')}><Trash2 size={16} /></button></div></article>) : <div className="settings-empty"><Monitor size={22} /><span>{t('noCashRegisters')}</span></div>}</div></section>
+      </div>
+      <section className="card settings-card"><header className="card-header"><div><span className="eyebrow">{t('terminals')}</span><h2>{t('terminalsTitle')}</h2><p>{t('terminalsDescription')}</p></div></header><div className="settings-list">{data.terminals?.length ? data.terminals.map((terminal) => <article className="settings-row terminal-row" key={terminal.id}><div className="settings-row-icon"><Wifi size={18} /></div><div><strong>{terminal.id}</strong><small>{terminal.store_id || '—'} · {terminal.pos_id || '—'} · {terminal.connected ? t('connected') : t('notConnected')}</small></div><span className={`status-pill ${terminal.operating_mode === 'PDV' ? 'success' : 'neutral'}`}>{terminal.operating_mode || '—'}</span><button className="button secondary compact" onClick={() => changeMode(terminal)} disabled={busy}>{t('changeMode')}</button></article>) : <div className="settings-empty"><Wifi size={22} /><span>{t('noTerminals')}</span></div>}</div></section>
+    </>}
+    {editor && <Modal title={editor.type === 'store' ? (editor.entry ? t('editBranch') : t('newBranch')) : (editor.entry ? t('editCashRegister') : t('newCashRegister'))} eyebrow={t('mpSettingsEyebrow')} onClose={() => setEditor(null)}><PointResourceForm type={editor.type} entry={editor.entry} stores={data?.stores || []} busy={busy} onClose={() => setEditor(null)} onSubmit={(form) => run(() => editor.type === 'store' ? (editor.entry ? api.updatePointStore(editor.entry.id, form) : api.createPointStore(form)) : (editor.entry ? api.updatePointRegister(editor.entry.id, form) : api.createPointRegister(form)), t('mpResourceSaved'))} /></Modal>}
+  </div>
+}
+
+function PointResourceForm({ type, entry, stores, busy, onClose, onSubmit }) {
+  const { t } = useI18n()
+  const [form, setForm] = useState(() => type === 'store' ? {
+    name: entry?.name || '', external_id: entry?.external_id || '', location: { ...(entry?.location || {}) },
+  } : { name: entry?.name || '', external_id: entry?.external_id || '', store_id: entry?.store_id || '', fixed_amount: entry?.fixed_amount ?? false })
+  const update = (key, value) => setForm((current) => ({ ...current, [key]: value }))
+  const updateLocation = (key, value) => setForm((current) => ({ ...current, location: { ...current.location, [key]: value } }))
+  const submit = (event) => { event.preventDefault(); onSubmit(form) }
+  return <form className="form-stack settings-form" onSubmit={submit}>
+    <label>{t('name')}<input required maxLength="120" value={form.name} onChange={(event) => update('name', event.target.value)} /></label>
+    <label>{t('externalId')}<input maxLength="60" value={form.external_id} onChange={(event) => update('external_id', event.target.value)} placeholder={type === 'store' ? 'ATELIER-01' : 'CAJA-01'} /></label>
+    {type === 'store' ? <div className="settings-form-grid"><label>{t('street')}<input value={form.location.street_name || ''} onChange={(event) => updateLocation('street_name', event.target.value)} /></label><label>{t('number')}<input value={form.location.street_number || ''} onChange={(event) => updateLocation('street_number', event.target.value)} /></label><label>{t('city')}<input value={form.location.city_name || ''} onChange={(event) => updateLocation('city_name', event.target.value)} /></label><label>{t('region')}<input value={form.location.state_name || ''} onChange={(event) => updateLocation('state_name', event.target.value)} /></label></div> : <><label>{t('branch')}<select value={form.store_id} onChange={(event) => update('store_id', event.target.value)}><option value="">{t('selectBranch')}</option>{stores.map((store) => <option value={store.id} key={store.id}>{store.name || store.id}</option>)}</select></label><label className="switch-field"><input type="checkbox" checked={Boolean(form.fixed_amount)} onChange={(event) => update('fixed_amount', event.target.checked)} /><i /><span>{t('fixedAmount')}</span></label></>}
+    <div className="modal-actions"><button type="button" className="button secondary" onClick={onClose} disabled={busy}>{t('cancel')}</button><button className="button primary" disabled={busy}>{busy ? t('saving') : t('saveChanges')}<Check size={17} /></button></div>
+  </form>
 }
 
 export default function App() {
@@ -981,6 +1056,7 @@ export default function App() {
     { id: 'inventory', label: t('inventory'), icon: Boxes },
     { id: 'metrics', label: t('metricsNav'), icon: LineChart },
     { id: 'activity', label: t('activity'), icon: History },
+    { id: 'settings', label: t('settings'), icon: Settings },
   ]
   const pageTitle = nav.find((entry) => entry.id === page)?.label
 
@@ -1002,6 +1078,7 @@ export default function App() {
         {page === 'inventory' && <Inventory items={items} onAdd={() => setModal({ type: 'add' })} onAdjust={(item) => setModal({ type: 'adjust', item })} onEdit={(item) => setModal({ type: 'edit', item })} />}
         {page === 'metrics' && <MetricsPage metrics={metricsData} range={metricsRange} onRangeChange={setMetricsRange} onRefresh={() => loadMetrics(metricsRange)} onOpenClose={() => setModal({ type: 'cash-close' })} onExport={exportDailyReport} loading={metricsLoading} exporting={exportingReport} />}
         {page === 'activity' && <Activity movements={movements} />}
+        {page === 'settings' && <MercadoPagoSettings setToast={setToast} />}
       </>}
     </main>
     <nav className="bottom-nav">{nav.map(({ id, label, icon: Icon }) => <button key={id} className={page === id ? 'active' : ''} onClick={() => setPage(id)}><Icon size={20} /><span>{label}</span></button>)}</nav>

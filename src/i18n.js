@@ -7,7 +7,8 @@ const supportedLanguages = ['es', 'en']
 const dictionaries = {
   es: {
     brandSubtitle: 'Panel de mostrador', language: 'Idioma', openMenu: 'Abrir menú', expandSidebar: 'Expandir navegación', collapseSidebar: 'Contraer navegación', preparing: 'Preparando tu panel…',
-    overview: 'Resumen', sales: 'Ventas', inventory: 'Inventario', metricsNav: 'Métricas', activity: 'Actividad',
+    overview: 'Resumen', sales: 'Ventas', inventory: 'Inventario', metricsNav: 'Métricas', activity: 'Actividad', settings: 'Configuración',
+    mpSettingsEyebrow: 'Mercado Pago Point', mpSettings: 'Configuración de Point', mpSettingsDescription: 'Administra la cuenta, sucursales, cajas y terminales desde el servidor.', loadingMpSettings: 'Cargando configuración de Point…', refreshSettings: 'Actualizar', mpAccount: 'Cuenta recaudadora', sellerAccount: 'Cuenta vendedora', sellerId: 'ID vendedor', site: 'Sitio', branches: 'Mercado Pago', branchesTitle: 'Sucursales', newBranch: 'Nueva sucursal', editBranch: 'Editar sucursal', branch: 'Sucursal', noBranches: 'No hay sucursales creadas.', cashRegisters: 'Mercado Pago', cashRegistersTitle: 'Cajas', newCashRegister: 'Nueva caja', editCashRegister: 'Editar caja', noCashRegisters: 'No hay cajas creadas.', terminals: 'Mercado Pago Point', terminalsTitle: 'Terminales', terminalsDescription: 'Consulta las terminales asociadas y cambia su modo operativo cuando sea necesario.', noTerminals: 'No hay terminales disponibles para esta cuenta.', connected: 'Conectada', notConnected: 'No conectada', changeMode: 'Cambiar modo', changeTerminalModeQuestion: '¿Cambiar esta terminal al modo {mode}? Confirma que el terminal esté disponible para esta cuenta.', terminalModeUpdated: 'Terminal actualizada al modo {mode}.', deleteMpResourceQuestion: '¿Eliminar “{name}” permanentemente en Mercado Pago?', mpResourceDeleted: 'Se eliminó “{name}”.', mpResourceSaved: 'La configuración se guardó en Mercado Pago.', edit: 'Editar', delete: 'Eliminar', name: 'Nombre', externalId: 'ID externo', street: 'Calle', number: 'Número', city: 'Ciudad', region: 'Región', selectBranch: 'Selecciona una sucursal', fixedAmount: 'Monto fijo',
     darkMode: 'Activar modo oscuro', lightMode: 'Activar modo claro',
     welcomeBack: 'Bienvenido de nuevo', loginDescription: 'Ingresa el código del personal para abrir el mostrador.', staffPin: 'Código de acceso',
     signingIn: 'Ingresando…', signIn: 'Ingresar', signOut: 'Cerrar sesión',
@@ -72,6 +73,7 @@ const dictionaries = {
     cashRefundHint: 'Entrega el efectivo al cliente después de confirmar.', pointRefundHint: 'Mercado Pago devolverá el cobro a la tarjeta original.',
     processingRefund: 'Procesando reembolso…', confirmRefund: 'Confirmar reembolso', refundCompleted: 'El reembolso quedó registrado.',
     refundPending: 'Reembolso por confirmar', refundFailed: 'Reembolso fallido', retryRefund: 'Reintentar reembolso',
+    printRefundCopy: 'Imprimir copia de devolución', refundCopyQueued: 'La copia de devolución fue enviada al Point. No es el voucher nativo de Mercado Pago ni un documento tributario.',
     creditNotePending: 'Nota de crédito pendiente', creditNoteIssued: 'Nota de crédito emitida', recordCreditNote: 'Registrar nota de crédito',
     creditNoteDescription: 'Registra aquí una nota ya emitida en el SII. La emisión automática llegará con el módulo tributario.',
     creditNoteFolio: 'Folio de nota de crédito (61)', siiTrackId: 'Track ID del SII', saveCreditNote: 'Guardar nota de crédito',
@@ -124,7 +126,8 @@ const dictionaries = {
     categories: { Bread: 'Pan', Pastries: 'Pastelería', Cakes: 'Tortas', Ingredients: 'Ingredientes', Packaging: 'Embalaje', Drinks: 'Bebidas', Other: 'Otro' },
   },
   en: {
-    brandSubtitle: 'Counter dashboard', language: 'Language', openMenu: 'Open menu', expandSidebar: 'Expand navigation', collapseSidebar: 'Collapse navigation', preparing: 'Preparing your dashboard…', overview: 'Overview', sales: 'Sales', inventory: 'Inventory', metricsNav: 'Metrics', activity: 'Activity',
+    brandSubtitle: 'Counter dashboard', language: 'Language', openMenu: 'Open menu', expandSidebar: 'Expand navigation', collapseSidebar: 'Collapse navigation', preparing: 'Preparing your dashboard…', overview: 'Overview', sales: 'Sales', inventory: 'Inventory', metricsNav: 'Metrics', activity: 'Activity', settings: 'Settings',
+    mpSettingsEyebrow: 'Mercado Pago Point', mpSettings: 'Point settings', mpSettingsDescription: 'Manage the account, stores, registers, and terminals from the server.', loadingMpSettings: 'Loading Point settings…', refreshSettings: 'Refresh', mpAccount: 'Collector account', sellerAccount: 'Seller account', sellerId: 'Seller ID', site: 'Site', branches: 'Mercado Pago', branchesTitle: 'Stores', newBranch: 'New store', editBranch: 'Edit store', branch: 'Store', noBranches: 'No stores have been created.', cashRegisters: 'Mercado Pago', cashRegistersTitle: 'Cash registers', newCashRegister: 'New cash register', editCashRegister: 'Edit cash register', noCashRegisters: 'No cash registers have been created.', terminals: 'Mercado Pago Point', terminalsTitle: 'Terminals', terminalsDescription: 'Review associated terminals and change their operating mode when needed.', noTerminals: 'No terminals are available for this account.', connected: 'Connected', notConnected: 'Not connected', changeMode: 'Change mode', changeTerminalModeQuestion: 'Change this terminal to {mode} mode? Confirm that the terminal belongs to this account.', terminalModeUpdated: 'Terminal changed to {mode} mode.', deleteMpResourceQuestion: 'Permanently delete “{name}” in Mercado Pago?', mpResourceDeleted: '“{name}” was deleted.', mpResourceSaved: 'The configuration was saved in Mercado Pago.', edit: 'Edit', delete: 'Delete', name: 'Name', externalId: 'External ID', street: 'Street', number: 'Number', city: 'City', region: 'Region', selectBranch: 'Select a store', fixedAmount: 'Fixed amount',
     darkMode: 'Turn on dark mode', lightMode: 'Turn on light mode',
     welcomeBack: 'Welcome back', loginDescription: 'Enter the staff access code to open the counter.', staffPin: 'Access code',
     signingIn: 'Signing in…', signIn: 'Sign in', signOut: 'Sign out',
@@ -185,6 +188,7 @@ const dictionaries = {
     cashRefundHint: 'Return the cash to the customer after confirming.', pointRefundHint: 'Mercado Pago will return the charge to the original card.',
     processingRefund: 'Processing refund…', confirmRefund: 'Confirm refund', refundCompleted: 'The refund was recorded.',
     refundPending: 'Refund awaiting confirmation', refundFailed: 'Refund failed', retryRefund: 'Retry refund',
+    printRefundCopy: 'Print refund copy', refundCopyQueued: 'The refund copy was sent to Point. It is not Mercado Pago’s native voucher or a tax document.',
     creditNotePending: 'Credit note pending', creditNoteIssued: 'Credit note issued', recordCreditNote: 'Record credit note',
     creditNoteDescription: 'Record a note already issued in SII. Automatic issuance will arrive with the tax module.',
     creditNoteFolio: 'Credit note folio (61)', siiTrackId: 'SII Track ID', saveCreditNote: 'Save credit note',

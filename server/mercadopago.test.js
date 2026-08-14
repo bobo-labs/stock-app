@@ -142,6 +142,18 @@ test('Point adapter follows the documented Orders API contract', async () => {
       id: 'refund-uuid-1', amount: 1850, full: false,
     })
     assert.equal(refunded.status_detail, 'partially_refunded')
+    const printed = await point.printPointRefundCopy({
+      ...sale,
+      paymentMethod: 'card',
+      mpPaymentId: 'PAY-MOCK-1',
+      mpOperationId: '172570565606',
+      mpCardBrand: 'master',
+      mpCardLastFour: '1249',
+    }, {
+      id: 'refund-uuid-1', status: 'processed', amount: 1850,
+      mpRefundId: 'REFUND-MOCK-1', processedAt: '2026-08-11T14:30:00.000Z',
+    })
+    assert.equal(printed.id, 'PRINT-ACTION-1')
     assert.deepEqual(requests.map(({ method, url }) => ({ method, url })), [
       { method: 'GET', url: '/terminals/v1/list?limit=50&offset=0' },
       { method: 'POST', url: '/v1/orders' },
@@ -149,12 +161,21 @@ test('Point adapter follows the documented Orders API contract', async () => {
       { method: 'GET', url: '/v1/payments/172570565606' },
       { method: 'POST', url: '/v1/orders/ORD-MOCK-1/cancel' },
       { method: 'POST', url: '/v1/orders/ORD-MOCK-1/refund' },
+      { method: 'POST', url: '/terminals/v1/actions' },
     ])
     assert.ok(requests.every((request) => request.authorization === 'Bearer test-access-token'))
     assert.equal(requests[1].idempotencyKey, sale.id)
     assert.match(requests[4].idempotencyKey, /^[0-9a-f]{8}-[0-9a-f-]{27}$/i)
     assert.equal(requests[5].idempotencyKey, 'refund-uuid-1')
     assert.deepEqual(requests[5].body, { transactions: [{ id: 'PAY-MOCK-1', amount: '1850' }] })
+    assert.match(requests[6].idempotencyKey, /^[0-9a-f]{8}-[0-9a-f-]{27}$/i)
+    assert.match(requests[6].body.external_reference, /^REFUND-SALE0001-refund-uuid-/)
+    assert.equal(requests[6].body.type, 'print')
+    assert.deepEqual(requests[6].body.config, { point: { terminal_id: terminalId, subtype: 'custom' } })
+    assert.match(requests[6].body.content, /COPIA DE DEVOLUCION/)
+    assert.match(requests[6].body.content, /NO TRIBUTARIO/)
+    assert.match(requests[6].body.content, /REFUND-MOCK-1/)
+    assert.doesNotMatch(requests[6].body.content, /[^\x00-\x7F]/)
     assert.deepEqual(requests[1].body, {
       type: 'point',
       external_reference: sale.mpExternalReference,
@@ -205,7 +226,67 @@ test('built-in Point mock simulates terminal arrival, approval, and cancellation
       id: 'mock-refund-2', amount: 3200, full: true,
     })
     assert.equal(fullRefund.status, 'refunded')
+    const printed = await point.printPointRefundCopy({ ...sale, paymentMethod: 'card' }, {
+      id: 'mock-refund-2', status: 'processed', amount: 3200,
+    })
+    assert.equal(printed.type, 'print')
+    assert.equal(printed.status, 'processed')
   } finally {
+    restoreEnvironment()
+  }
+})
+
+test('Point infrastructure adapter manages stores, registers, and terminal modes', async () => {
+  const restoreEnvironment = preserveEnvironment([
+    'MERCADOPAGO_API_BASE', 'MERCADOPAGO_MOCK', 'MERCADOPAGO_ACCESS_TOKEN',
+    'MERCADOPAGO_POINT_TERMINAL_ID', 'MERCADOPAGO_WEBHOOK_SECRET',
+  ])
+  const requests = []
+  const server = http.createServer(async (request, response) => {
+    const chunks = []
+    for await (const chunk of request) chunks.push(chunk)
+    const bodyText = Buffer.concat(chunks).toString('utf8')
+    requests.push({ method: request.method, url: request.url, body: bodyText ? JSON.parse(bodyText) : null })
+    response.setHeader('Content-Type', 'application/json')
+    if (request.method === 'GET' && request.url === '/users/me') return response.end(JSON.stringify({ id: 123, nickname: 'atelier', site_id: 'MLC' }))
+    if (request.method === 'GET' && request.url.startsWith('/users/123/stores/search')) return response.end(JSON.stringify({ results: [{ id: 'STORE-1', name: 'Atelier del Puerto', external_id: 'ATELIER-01' }], paging: { total: 1 } }))
+    if (request.method === 'POST' && request.url === '/users/123/stores') { response.statusCode = 201; return response.end(JSON.stringify({ id: 'STORE-2', ...requests.at(-1).body })) }
+    if (request.method === 'PUT' && request.url === '/users/123/stores/STORE-1') return response.end(JSON.stringify({ id: 'STORE-1', ...requests.at(-1).body }))
+    if (request.method === 'DELETE' && request.url === '/users/123/stores/STORE-1') return response.end(JSON.stringify({ id: 'STORE-1', deleted: true }))
+    if (request.method === 'GET' && request.url.startsWith('/pos?')) return response.end(JSON.stringify({ results: [{ id: 'POS-1', name: 'Caja 1', store_id: 'STORE-1' }], paging: { total: 1 } }))
+    if (request.method === 'POST' && request.url === '/pos') { response.statusCode = 201; return response.end(JSON.stringify({ id: 'POS-2', ...requests.at(-1).body })) }
+    if (request.method === 'PUT' && request.url === '/pos/POS-1') return response.end(JSON.stringify({ id: 'POS-1', ...requests.at(-1).body }))
+    if (request.method === 'DELETE' && request.url === '/pos/POS-1') return response.end(JSON.stringify({ id: 'POS-1', deleted: true }))
+    if (request.method === 'GET' && request.url.startsWith('/terminals/v1/list?')) return response.end(JSON.stringify({ data: { terminals: [{ id: 'NEWLAND_N950__SERIAL', operating_mode: 'STANDALONE' }] }, paging: { total: 1 } }))
+    if (request.method === 'PATCH' && request.url === '/terminals/v1/setup') return response.end(JSON.stringify(requests.at(-1).body))
+    response.statusCode = 404
+    response.end(JSON.stringify({ error: 'unexpected_request' }))
+  })
+
+  try {
+    const address = await listen(server)
+    process.env.MERCADOPAGO_API_BASE = `http://127.0.0.1:${address.port}`
+    process.env.MERCADOPAGO_MOCK = 'false'
+    process.env.MERCADOPAGO_ACCESS_TOKEN = 'admin-token'
+    delete process.env.MERCADOPAGO_POINT_TERMINAL_ID
+    const point = await import(`./mercadopago.js?management=${Date.now()}`)
+
+    const stores = await point.listPointStores()
+    const registers = await point.listPointPos({ storeId: 'STORE-1' })
+    const terminals = await point.listPointTerminals({ storeId: 'STORE-1', posId: 'POS-1' })
+    assert.equal(stores.stores[0].name, 'Atelier del Puerto')
+    assert.equal(registers.registers[0].id, 'POS-1')
+    assert.equal(terminals.terminals[0].operating_mode, 'STANDALONE')
+    assert.equal((await point.createPointStore({ name: 'Nueva sucursal', external_id: 'NEW-1', location: { city_name: 'Viña del Mar' } })).id, 'STORE-2')
+    assert.equal((await point.createPointPos({ name: 'Caja 2', store_id: 'STORE-1', fixed_amount: false })).id, 'POS-2')
+    assert.equal((await point.updatePointStore('STORE-1', { name: 'Atelier actualizado' })).name, 'Atelier actualizado')
+    assert.equal((await point.updatePointPos('POS-1', { name: 'Caja actualizada' })).name, 'Caja actualizada')
+    assert.equal((await point.deletePointStore('STORE-1')).deleted, true)
+    assert.equal((await point.deletePointPos('POS-1')).deleted, true)
+    assert.equal((await point.setupPointTerminal('NEWLAND_N950__SERIAL', 'PDV')).terminals[0].operating_mode, 'PDV')
+    assert.ok(requests.every((request) => ['GET', 'DELETE'].includes(request.method) || request.body !== null))
+  } finally {
+    if (server.listening) await close(server)
     restoreEnvironment()
   }
 })
