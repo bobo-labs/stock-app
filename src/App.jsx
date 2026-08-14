@@ -4,7 +4,7 @@ import {
   AlertTriangle, ArrowDown, ArrowRight, ArrowUp, BadgeCheck, Banknote, BarChart3,
   Boxes, CakeSlice, Calculator, CalendarClock, Check, ChevronRight, CirclePlus, Clock3, Coffee, CreditCard, Download,
   Croissant, FileCheck2, History, LayoutDashboard, LineChart, LockKeyhole, LogOut, Menu, Minus, Moon, PanelLeftClose,
-  PackageOpen, Pencil, Plus, ReceiptText, RotateCw, Search, ShoppingBasket,
+  PackageOpen, Pencil, Plus, ReceiptText, RotateCw, Search, ShoppingBasket, Monitor,
   Settings, SlidersHorizontal, Sparkles, Store, Sun, TrendingDown, TrendingUp, Trash2, Undo2, WalletCards, Wheat, Wifi, X,
 } from 'lucide-react'
 import { api } from './api.js'
