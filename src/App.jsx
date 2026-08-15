@@ -900,8 +900,8 @@ function MercadoPagoSettings({ setToast }) {
       <section className="settings-account card">
         <div className="settings-account-identity"><div className="metric-icon"><WalletCards size={20} /></div><div><span className="eyebrow">{t('mpAccount')}</span><strong>{data.account?.nickname || t('sellerAccount')}</strong><small>{t('sellerId')}: {data.account?.id || '—'} · {t('site')}: {data.account?.site_id || '—'}</small></div></div>
         <div className="settings-health" aria-label={t('serverIntegration')}>
-          <span className={`status-pill ${data.configuration?.credentialsCentralized ? 'success' : 'danger'}`}><LockKeyhole size={13} />{t('serverCredentials')}</span>
-          <span className={`status-pill ${data.configuration?.webhookConfigured ? 'success' : 'danger'}`}><BadgeCheck size={13} />{t('webhookConfigured')}</span>
+          <span className={`status-pill ${data.configuration?.credentialsCentralized && data.configuration?.credentialsExposedToClient === false ? 'success' : 'danger'}`} title={t('serverCredentialsDescription')}><LockKeyhole size={13} />{t('serverCredentials')}</span>
+          <span className={`status-pill ${data.configuration?.webhookConfigured && data.configuration?.webhookTopic === 'order' ? 'success' : 'danger'}`} title={t('webhookConfiguredDescription')}><BadgeCheck size={13} />{t('webhookConfigured')}</span>
         </div>
       </section>
       <div className="settings-grid">

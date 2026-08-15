@@ -655,6 +655,19 @@ app.use((error, _req, res, _next) => {
 })
 
 await initializeStore()
+const pointSecurity = pointConfiguration()
+console.info(JSON.stringify({
+  event: 'point_integration_configuration',
+  credentialsCentralized: pointSecurity.credentialsCentralized,
+  credentialStorage: pointSecurity.credentialStorage,
+  credentialsExposedToClient: pointSecurity.credentialsExposedToClient,
+  accessTokenTransport: pointSecurity.accessTokenTransport,
+  webhookConfigured: pointSecurity.webhookConfigured,
+  webhookMode: pointSecurity.webhookMode,
+  webhookTopic: pointSecurity.webhookTopic,
+  webhookSignatureValidation: pointSecurity.webhookSignatureValidation,
+  webhookAuthoritativeOrderLookup: pointSecurity.webhookAuthoritativeOrderLookup,
+}))
 const server = app.listen(port, '0.0.0.0', () => console.log(`Bakery POS listening on port ${port}`))
 
 async function shutdown() {

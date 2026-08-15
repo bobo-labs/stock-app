@@ -120,9 +120,19 @@ test('Point adapter follows the documented Orders API contract', async () => {
       configured: true,
       mockMode: false,
       terminalConfigured: true,
+      credentialsCentralized: true,
+      credentialStorage: 'server_environment',
+      credentialsExposedToClient: false,
+      accessTokenTransport: 'authorization_header',
       webhookConfigured: true,
+      webhookMode: 'application_order_topic',
+      webhookTopic: 'order',
+      webhookEndpointPath: '/api/mercadopago/webhook',
+      webhookSignatureValidation: true,
+      webhookAuthoritativeOrderLookup: true,
       terminalLabel: 'X0000001',
     })
+    assert.doesNotMatch(JSON.stringify(point.pointConfiguration()), /test-access-token|test-webhook-secret/)
 
     assert.deepEqual(await point.getConfiguredTerminal(), {
       id: terminalId,
@@ -149,6 +159,13 @@ test('Point adapter follows the documented Orders API contract', async () => {
     assert.equal(management.stores[0].assigned, true)
     assert.equal(management.stores[0].register_count, 1)
     assert.equal(management.registers[0].assigned, true)
+    assert.equal(management.configuration.credentialsCentralized, true)
+    assert.equal(management.configuration.credentialsExposedToClient, false)
+    assert.equal(management.configuration.accessTokenTransport, 'authorization_header')
+    assert.equal(management.configuration.webhookMode, 'application_order_topic')
+    assert.equal(management.configuration.webhookTopic, 'order')
+    assert.equal(management.configuration.webhookAuthoritativeOrderLookup, true)
+    assert.doesNotMatch(JSON.stringify(management), /test-access-token|test-webhook-secret/)
 
     const created = await point.createPointOrder(sale)
     assert.equal(created.status, 'created')
@@ -182,6 +199,7 @@ test('Point adapter follows the documented Orders API contract', async () => {
     ])
     assert.ok(requests.every((request) => request.authorization === 'Bearer test-access-token'))
     assert.equal(requests[1].idempotencyKey, sale.id)
+    assert.equal(Object.hasOwn(requests[1].body, 'notification_url'), false)
     assert.match(requests[4].idempotencyKey, /^[0-9a-f]{8}-[0-9a-f-]{27}$/i)
     assert.equal(requests[5].idempotencyKey, 'refund-uuid-1')
     assert.deepEqual(requests[5].body, { transactions: [{ id: 'PAY-MOCK-1', amount: '1850' }] })

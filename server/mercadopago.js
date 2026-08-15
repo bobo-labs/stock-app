@@ -13,6 +13,22 @@ function credentials() {
   }
 }
 
+export function pointIntegrationConfiguration() {
+  const { accessToken, webhookSecret } = credentials()
+  return {
+    credentialsCentralized: mockMode || Boolean(accessToken),
+    credentialStorage: mockMode ? 'mock' : 'server_environment',
+    credentialsExposedToClient: false,
+    accessTokenTransport: 'authorization_header',
+    webhookConfigured: mockMode || Boolean(webhookSecret),
+    webhookMode: 'application_order_topic',
+    webhookTopic: 'order',
+    webhookEndpointPath: '/api/mercadopago/webhook',
+    webhookSignatureValidation: mockMode || Boolean(webhookSecret),
+    webhookAuthoritativeOrderLookup: true,
+  }
+}
+
 function configurationError() {
   return Object.assign(new Error('Mercado Pago is not configured. Add the access token and Point terminal ID in Railway.'), { status: 503 })
 }
@@ -127,7 +143,7 @@ function sameId(left, right) {
 }
 
 export function buildPointManagement({ account, stores = [], registers = [], terminals = [], paging = {} } = {}) {
-  const { accessToken, terminalId, webhookSecret } = credentials()
+  const { terminalId } = credentials()
   const storeById = new Map(stores.map((store) => [String(store.id), store]))
   const registerById = new Map(registers.map((register) => [String(register.id), register]))
 
@@ -181,9 +197,8 @@ export function buildPointManagement({ account, stores = [], registers = [], ter
     registerPaging: paging.registers || {},
     terminalPaging: paging.terminals || {},
     configuration: {
-      credentialsCentralized: mockMode || Boolean(accessToken),
+      ...pointIntegrationConfiguration(),
       terminalConfigured: mockMode || Boolean(terminalId),
-      webhookConfigured: mockMode || Boolean(webhookSecret),
     },
     assignment: {
       apiSupported: false,
@@ -335,12 +350,12 @@ function mockRefundOrder(sale, refund) {
 }
 
 export function pointConfiguration() {
-  const { accessToken, terminalId, webhookSecret } = credentials()
+  const { accessToken, terminalId } = credentials()
   return {
     configured: mockMode || Boolean(accessToken && terminalId),
     mockMode,
     terminalConfigured: Boolean(terminalId),
-    webhookConfigured: mockMode || Boolean(webhookSecret),
+    ...pointIntegrationConfiguration(),
     terminalLabel: terminalId ? terminalId.split('__').at(-1)?.slice(-8) || '' : '',
   }
 }
