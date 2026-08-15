@@ -648,6 +648,8 @@ app.use((error, _req, res, _next) => {
   const status = error.status || 500
   res.status(status).json({
     error: status < 500 || error.status ? error.message : 'Something went wrong. Please try again.',
+    ...(error.code ? { code: error.code } : {}),
+    ...(error.pointStatus ? { pointStatus: error.pointStatus } : {}),
     ...(error.saleId ? { saleId: error.saleId } : {}),
     ...(error.refundId ? { refundId: error.refundId } : {}),
     ...(error.uncertain ? { uncertain: true } : {}),

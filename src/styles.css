@@ -483,6 +483,11 @@ h1, h2, h3, p { margin-top: 0; }
 .progress-line i { display: block; width: 40%; height: 100%; border-radius: inherit; background: var(--cocoa); animation: loading-line 1.4s ease-in-out infinite; }
 @keyframes loading-line { 0% { transform: translateX(-100%); } 100% { transform: translateX(350%); } }
 .danger-text { margin-top: 12px; color: var(--rose); }
+.terminal-cancel-guidance { display: flex; width: min(360px,100%); align-items: flex-start; gap: 9px; margin-top: 14px; padding: 11px 12px; border: 1px solid color-mix(in srgb, var(--amber) 22%, var(--line)); border-radius: 11px; background: var(--amber-soft); color: var(--amber); text-align: left; }
+.terminal-cancel-guidance > svg { flex: 0 0 auto; margin-top: 1px; }
+.terminal-cancel-guidance strong,.terminal-cancel-guidance span { display: block; }
+.terminal-cancel-guidance strong { margin-bottom: 3px; color: var(--ink); font-size: 10px; }
+.terminal-cancel-guidance span { color: var(--muted); font-size: 9px; line-height: 1.45; }
 .payment-result > div:first-child { display: grid; width: 68px; height: 68px; margin-bottom: 18px; place-items: center; border-radius: 22px; }
 .payment-result.success > div:first-child { background: var(--sage-soft); color: var(--sage); }.payment-result.error > div:first-child { background: var(--rose-soft); color: var(--rose); }
 .success-total { display: flex; width: min(300px,100%); align-items: center; justify-content: space-between; margin-bottom: 22px; padding: 13px 15px; border-radius: 12px; background: #faf6f1; }
@@ -540,6 +545,7 @@ h1, h2, h3, p { margin-top: 0; }
 .toast > div { display: grid; width: 32px; height: 32px; place-items: center; border-radius: 9px; }
 .toast.success > div { color: var(--sage); background: var(--sage-soft); }
 .toast.error > div { color: var(--danger); background: var(--rose-soft); }
+.toast.warning > div { color: var(--amber); background: var(--amber-soft); }
 .toast button { display: grid; width: 34px; height: 34px; place-items: center; border: 0; border-radius: 9px; background: transparent; color: var(--muted); }
 .loading { display: flex; min-height: calc(100vh - 72px); flex-direction: column; align-items: center; justify-content: center; gap: 13px; color: var(--muted); font-size: 12px; }
 .loading.full { min-height: 100vh; }

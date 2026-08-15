@@ -253,6 +253,10 @@ test('built-in Point mock simulates terminal arrival, approval, and cancellation
     assert.equal(processed.status_detail, 'accredited')
     assert.equal(processed.transactions.payments[0].paid_amount, '3200')
     assert.equal((await point.cancelPointOrder('MOCK-mock-sale-1', sale)).status, 'canceled')
+    await assert.rejects(
+      point.cancelPointOrder('MOCK-mock-sale-1', { ...sale, mpStatus: 'at_terminal' }),
+      (error) => error.status === 409 && error.code === 'POINT_CANCEL_ON_TERMINAL' && error.pointStatus === 'at_terminal',
+    )
     const partialRefund = await point.refundPointOrder('MOCK-mock-sale-1', { ...sale, mpPaymentId: 'MOCK-PAY-mock-sale-1' }, {
       id: 'mock-refund-1', amount: 1200, full: false,
     })

@@ -357,6 +357,7 @@ function CheckoutModal({ checkout, posConfig, onCash, onCard, onRetry, onCancelS
   const finalState = sale ? saleState(sale.status, t) : null
   const pointHasOrder = checkout.stage === 'processing' && sale?.mpStatus
   const pointHasTerminal = pointHasOrder && ['at_terminal', 'action_required'].includes(sale.mpStatus)
+  const pointCanCancelFromPos = sale?.mpOrderId && (!sale.mpStatus || sale.mpStatus === 'created')
   const progressTitle = checkout.stage === 'connecting'
     ? t('sendingToPoint')
     : pointHasTerminal ? t('pointReady') : t('waitingForPoint')
@@ -379,7 +380,8 @@ function CheckoutModal({ checkout, posConfig, onCash, onCard, onRetry, onCancelS
       {sale && <div className="payment-reference"><span>{t('sale')}</span><strong>#{sale.shortId}</strong><span>{formatCurrency(sale.total)}</span></div>}
       <div className="progress-line"><i /></div>
       {sale?.mpStatus === 'action_required' && <div className="setup-hint"><AlertTriangle size={17} />{t('checkTerminal')}</div>}
-      {sale?.mpOrderId && <button className="text-button danger-text" onClick={onCancelSale} disabled={busy}>{t('cancelPayment')}</button>}
+      {pointHasTerminal && <div className="terminal-cancel-guidance" role="note"><Monitor size={17} /><div><strong>{t('cancelAtTerminalTitle')}</strong><span>{t('cancelAtTerminalDescription')}</span></div></div>}
+      {pointCanCancelFromPos && <button className="text-button danger-text" onClick={onCancelSale} disabled={busy}>{t('cancelPayment')}</button>}
     </div>}
     {checkout.stage === 'connection-error' && <div className="payment-result error">
       <div><Wifi size={28} /></div><h3>{t('connectionUncertain')}</h3><p>{checkout.error}</p>
@@ -580,7 +582,19 @@ function SalesCounter({ items, sales, posConfig, onRefresh, setToast }) {
     if (!checkout.sale?.id) return
     setBusy(true)
     try { await finish(await api.cancelSale(checkout.sale.id)) }
-    catch (error) { setToast({ type: 'error', message: error.message }) }
+    catch (error) {
+      const knownCancellation = error.code === 'POINT_CANCEL_ON_TERMINAL' || error.code === 'POINT_CANCEL_UNAVAILABLE'
+      setToast({
+        type: knownCancellation ? 'warning' : 'error',
+        message: error.code === 'POINT_CANCEL_ON_TERMINAL'
+          ? t('cancelAtTerminalToast')
+          : error.code === 'POINT_CANCEL_UNAVAILABLE' ? t('cancelUnavailableToast') : error.message,
+      })
+      if (knownCancellation) {
+        const refreshed = await api.sale(checkout.sale.id, true).catch(() => null)
+        if (refreshed) setCheckout((current) => ({ ...current, sale: refreshed }))
+      }
+    }
     finally { setBusy(false) }
   }
   const refundSale = async (input) => {

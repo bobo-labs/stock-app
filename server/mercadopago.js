@@ -68,6 +68,7 @@ async function mercadoPagoRequest(endpoint, { method = 'GET', body, idempotencyK
       status: response.status === 401 || response.status === 403 ? 502 : Math.max(400, Math.min(response.status, 503)),
       mercadoPagoStatus: response.status,
       mercadoPagoCode: data?.code || data?.errors?.[0]?.code || '',
+      mercadoPagoDetail: detail,
     })
   }
   return data
@@ -408,10 +409,33 @@ export async function getPointPayment(paymentId) {
 }
 
 export async function cancelPointOrder(orderId, sale) {
+  const knownStatus = String(sale?.mpStatus || '').toLowerCase()
+  if (knownStatus && knownStatus !== 'created') throw pointCancellationError(knownStatus)
   if (mockMode) return mockOrder(sale, 'canceled')
-  return mercadoPagoRequest(`/v1/orders/${encodeURIComponent(orderId)}/cancel`, {
-    method: 'POST',
-    idempotencyKey: crypto.randomUUID(),
+
+  try {
+    return await mercadoPagoRequest(`/v1/orders/${encodeURIComponent(orderId)}/cancel`, {
+      method: 'POST',
+      idempotencyKey: crypto.randomUUID(),
+    })
+  } catch (error) {
+    const detail = String(error.mercadoPagoDetail || error.message || '').toLowerCase()
+    if (detail.includes('doesn\'t allow cancellation') || detail.includes('must be in \'created\' status')) {
+      const inferredStatus = detail.includes('at_terminal') ? 'at_terminal' : knownStatus
+      throw pointCancellationError(inferredStatus)
+    }
+    throw error
+  }
+}
+
+function pointCancellationError(pointStatus = '') {
+  const cancelOnTerminal = ['at_terminal', 'action_required'].includes(pointStatus)
+  return Object.assign(new Error(cancelOnTerminal
+    ? 'This charge has already reached the Point terminal and must be cancelled on the device.'
+    : 'This charge can no longer be cancelled. Refresh its status and refund it if it was approved.'), {
+    status: 409,
+    code: cancelOnTerminal ? 'POINT_CANCEL_ON_TERMINAL' : 'POINT_CANCEL_UNAVAILABLE',
+    pointStatus,
   })
 }
 

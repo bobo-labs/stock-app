@@ -30,7 +30,7 @@ Official reference: [Mercado Pago Point credentials](https://www.mercadopago.cl/
   authoritative resource through `GET /v1/orders/{id}`.
 - Processing is idempotent in the local sale store; duplicate notifications do
   not deduct inventory twice.
-- On 2026-08-15 the Mercado Pago notifications diagnostic reported 15 of 15
+- On 2026-08-15 the Mercado Pago notifications diagnostic reported 17 of 17
   deliveries successful, all HTTP 200, with an average response time of about
   62 ms.
 - The production and sandbox callback URLs were saved again on 2026-08-15 for
@@ -47,6 +47,15 @@ current `POST /v1/orders` Point contract: the documented request schema has no
 `notification_url`, and notifications are configured at application level.
 The webhook-delivery history above is the operational proof that the callback
 is active.
+
+The MCP quality checklist exposes the legacy internal field `webhooks_point`
+with the description “webhook notifications to the payment intent”. That check
+cannot be satisfied by adding an unsupported property to a current Point Order;
+it requires Mercado Pago to recognize the application-level `order` webhook or
+to review the evidence manually. Likewise, “Centralized credentials” is an
+architectural control that cannot be inferred from a payment: the evidence is
+the server-only environment variable, Bearer transport, protected backend
+routes, and automated secret-leak tests described above.
 
 Official references:
 
