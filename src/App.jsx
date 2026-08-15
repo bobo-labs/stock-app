@@ -910,9 +910,17 @@ function PointResourceForm({ type, entry, stores, busy, onClose, onSubmit }) {
   const updateLocation = (key, value) => setForm((current) => ({ ...current, location: { ...current.location, [key]: value } }))
   const submit = (event) => { event.preventDefault(); onSubmit(form) }
   return <form className="form-stack settings-form" onSubmit={submit}>
-    <label>{t('name')}<input required maxLength="120" value={form.name} onChange={(event) => update('name', event.target.value)} /></label>
-    <label>{t('externalId')}<input maxLength="60" value={form.external_id} onChange={(event) => update('external_id', event.target.value)} placeholder={type === 'store' ? 'ATELIER-01' : 'CAJA-01'} /></label>
-    {type === 'store' ? <div className="settings-form-grid"><label>{t('street')}<input value={form.location.street_name || ''} onChange={(event) => updateLocation('street_name', event.target.value)} /></label><label>{t('number')}<input value={form.location.street_number || ''} onChange={(event) => updateLocation('street_number', event.target.value)} /></label><label>{t('city')}<input value={form.location.city_name || ''} onChange={(event) => updateLocation('city_name', event.target.value)} /></label><label>{t('region')}<input value={form.location.state_name || ''} onChange={(event) => updateLocation('state_name', event.target.value)} /></label></div> : <><label>{t('branch')}<select value={form.store_id} onChange={(event) => update('store_id', event.target.value)}><option value="">{t('selectBranch')}</option>{stores.map((store) => <option value={store.id} key={store.id}>{store.name || store.id}</option>)}</select></label><label className="switch-field"><input type="checkbox" checked={Boolean(form.fixed_amount)} onChange={(event) => update('fixed_amount', event.target.checked)} /><i /><span>{t('fixedAmount')}</span></label></>}
+    <label><span>{t('name')}</span><input required maxLength="120" value={form.name} onChange={(event) => update('name', event.target.value)} /></label>
+    <label><span>{t('externalId')}</span><input maxLength="60" value={form.external_id} onChange={(event) => update('external_id', event.target.value)} placeholder={type === 'store' ? 'ATELIER-01' : 'CAJA-01'} /></label>
+    {type === 'store' ? <div className="settings-form-grid">
+      <label><span>{t('street')}</span><input value={form.location.street_name || ''} onChange={(event) => updateLocation('street_name', event.target.value)} /></label>
+      <label><span>{t('number')}</span><input value={form.location.street_number || ''} onChange={(event) => updateLocation('street_number', event.target.value)} /></label>
+      <label><span>{t('city')}</span><input value={form.location.city_name || ''} onChange={(event) => updateLocation('city_name', event.target.value)} /></label>
+      <label><span>{t('region')}</span><input value={form.location.state_name || ''} onChange={(event) => updateLocation('state_name', event.target.value)} /></label>
+    </div> : <>
+      <label><span>{t('branch')}</span><select value={form.store_id} onChange={(event) => update('store_id', event.target.value)}><option value="">{t('selectBranch')}</option>{stores.map((store) => <option value={store.id} key={store.id}>{store.name || store.id}</option>)}</select></label>
+      <label className="switch-field"><input type="checkbox" checked={Boolean(form.fixed_amount)} onChange={(event) => update('fixed_amount', event.target.checked)} /><i /><span>{t('fixedAmount')}</span></label>
+    </>}
     <div className="modal-actions"><button type="button" className="button secondary" onClick={onClose} disabled={busy}>{t('cancel')}</button><button className="button primary" disabled={busy}>{busy ? t('saving') : t('saveChanges')}<Check size={17} /></button></div>
   </form>
 }
