@@ -917,6 +917,8 @@ function PointResourceForm({ type, entry, stores, busy, onClose, onSubmit }) {
       <label><span>{t('number')}</span><input value={form.location.street_number || ''} onChange={(event) => updateLocation('street_number', event.target.value)} /></label>
       <label><span>{t('city')}</span><input value={form.location.city_name || ''} onChange={(event) => updateLocation('city_name', event.target.value)} /></label>
       <label><span>{t('region')}</span><input value={form.location.state_name || ''} onChange={(event) => updateLocation('state_name', event.target.value)} /></label>
+      <label><span>{t('latitude')}</span><input required type="number" min="-90" max="90" step="any" value={form.location.latitude ?? ''} onChange={(event) => updateLocation('latitude', event.target.value)} placeholder="-33.0245" /></label>
+      <label><span>{t('longitude')}</span><input required type="number" min="-180" max="180" step="any" value={form.location.longitude ?? ''} onChange={(event) => updateLocation('longitude', event.target.value)} placeholder="-71.5518" /></label>
     </div> : <>
       <label><span>{t('branch')}</span><select value={form.store_id} onChange={(event) => update('store_id', event.target.value)}><option value="">{t('selectBranch')}</option>{stores.map((store) => <option value={store.id} key={store.id}>{store.name || store.id}</option>)}</select></label>
       <label className="switch-field"><input type="checkbox" checked={Boolean(form.fixed_amount)} onChange={(event) => update('fixed_amount', event.target.checked)} /><i /><span>{t('fixedAmount')}</span></label>

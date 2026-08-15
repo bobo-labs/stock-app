@@ -179,6 +179,11 @@ function cleanPointStoreInput(body = {}) {
   if (!name || name.length > 120) throw badRequest('A store name between 1 and 120 characters is required.')
   if (externalId.length > 60) throw badRequest('The store external ID is too long.')
   const location = body.location && typeof body.location === 'object' ? body.location : {}
+  const latitude = Number(location.latitude)
+  const longitude = Number(location.longitude)
+  if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90 || !Number.isFinite(longitude) || longitude < -180 || longitude > 180) {
+    throw badRequest('A valid latitude and longitude are required to create a Mercado Pago store.')
+  }
   return {
     name,
     external_id: externalId,
