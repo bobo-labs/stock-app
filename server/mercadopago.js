@@ -122,6 +122,76 @@ function cleanPosPayload(input = {}) {
   return payload
 }
 
+function sameId(left, right) {
+  return left !== undefined && left !== null && right !== undefined && right !== null && String(left) === String(right)
+}
+
+export function buildPointManagement({ account, stores = [], registers = [], terminals = [], paging = {} } = {}) {
+  const { accessToken, terminalId, webhookSecret } = credentials()
+  const storeById = new Map(stores.map((store) => [String(store.id), store]))
+  const registerById = new Map(registers.map((register) => [String(register.id), register]))
+
+  const managedTerminals = terminals.map((terminal) => {
+    const store = terminal.store_id === undefined || terminal.store_id === null
+      ? null
+      : storeById.get(String(terminal.store_id)) || null
+    const register = terminal.pos_id === undefined || terminal.pos_id === null
+      ? null
+      : registerById.get(String(terminal.pos_id)) || null
+    const assignmentMatches = Boolean(store && register && sameId(register.store_id, store.id))
+    const serial = String(terminal.id || '').split('__').at(-1) || String(terminal.id || '')
+    const online = typeof terminal.connected === 'boolean' ? terminal.connected : null
+
+    return {
+      ...terminal,
+      serial,
+      online,
+      configured: mockMode ? terminal.id === 'MOCK_POINT_SMART_2' : Boolean(terminalId && terminal.id === terminalId),
+      ready: terminal.operating_mode === 'PDV' && assignmentMatches,
+      assignment_status: assignmentMatches ? 'assigned' : (terminal.store_id || terminal.pos_id ? 'partial' : 'unassigned'),
+      store: store ? { id: store.id, name: store.name, external_id: store.external_id } : null,
+      register: register ? { id: register.id, name: register.name, external_id: register.external_id, store_id: register.store_id } : null,
+      management_url: serial ? `https://www.mercadopago.cl/point/devices/${encodeURIComponent(serial)}` : '',
+    }
+  })
+
+  const managedStores = stores.map((store) => ({
+    ...store,
+    register_count: registers.filter((register) => sameId(register.store_id, store.id)).length,
+    terminal_count: managedTerminals.filter((terminal) => sameId(terminal.store_id, store.id)).length,
+    assigned: managedTerminals.some((terminal) => sameId(terminal.store_id, store.id)),
+  }))
+  const managedRegisters = registers.map((register) => {
+    const store = register.store_id === undefined || register.store_id === null
+      ? null
+      : storeById.get(String(register.store_id)) || null
+    return {
+      ...register,
+      assigned: managedTerminals.some((terminal) => sameId(terminal.pos_id, register.id)),
+      store: store ? { id: store.id, name: store.name, external_id: store.external_id } : null,
+    }
+  })
+
+  return {
+    account,
+    stores: managedStores,
+    registers: managedRegisters,
+    terminals: managedTerminals,
+    storePaging: paging.stores || {},
+    registerPaging: paging.registers || {},
+    terminalPaging: paging.terminals || {},
+    configuration: {
+      credentialsCentralized: mockMode || Boolean(accessToken),
+      terminalConfigured: mockMode || Boolean(terminalId),
+      webhookConfigured: mockMode || Boolean(webhookSecret),
+    },
+    assignment: {
+      apiSupported: false,
+      method: 'mercado_pago_app',
+    },
+  }
+}
+
 export async function getMercadoPagoAccount() {
   requireAccountAccess()
   if (mockMode) return { id: 'MOCK-SELLER', nickname: 'MOCK_SELLER', site_id: 'MLC' }
@@ -386,19 +456,35 @@ export async function printPointRefundCopy(sale, refund) {
 
 export async function getConfiguredTerminal() {
   const { terminalId } = credentials()
-  if (mockMode) return { id: 'MOCK_POINT_SMART_2', operatingMode: 'PDV', connected: true }
+  if (mockMode) return { id: 'MOCK_POINT_SMART_2', operatingMode: 'PDV', connected: true, online: true, ready: true }
   if (!terminalId) throw configurationError()
   const response = await mercadoPagoRequest('/terminals/v1/list?limit=50&offset=0')
   const terminals = response?.data?.terminals || response?.terminals || []
   const terminal = terminals.find((entry) => entry.id === terminalId)
-  return terminal ? {
+  if (!terminal) {
+    return {
+      id: terminalId,
+      label: terminalId.split('__').at(-1)?.slice(-8) || '',
+      operatingMode: 'NOT_FOUND',
+      connected: false,
+      online: null,
+      ready: false,
+    }
+  }
+
+  const ready = terminal.operating_mode === 'PDV' && Boolean(terminal.store_id) && Boolean(terminal.pos_id)
+  const online = typeof terminal.connected === 'boolean' ? terminal.connected : null
+  return {
     id: terminal.id,
     label: terminal.id.split('__').at(-1)?.slice(-8) || terminal.id,
     operatingMode: terminal.operating_mode,
-    connected: terminal.operating_mode === 'PDV',
+    // Compatibility for older clients: this means configuration readiness, not network presence.
+    connected: ready,
+    online,
+    ready,
     storeId: terminal.store_id,
     posId: terminal.pos_id,
-  } : { id: terminalId, label: terminalId.split('__').at(-1)?.slice(-8) || '', operatingMode: 'NOT_FOUND', connected: false }
+  }
 }
 
 export function validatePointWebhook({ signature, requestId, dataId }) {

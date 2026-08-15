@@ -129,9 +129,26 @@ test('Point adapter follows the documented Orders API contract', async () => {
       label: 'X0000001',
       operatingMode: 'PDV',
       connected: true,
+      online: null,
+      ready: true,
       storeId: 'STORE-1',
       posId: 42,
     })
+
+    const management = point.buildPointManagement({
+      account: { id: 123, nickname: 'ATELIER', site_id: 'MLC' },
+      stores: [{ id: 'STORE-1', name: 'Atelier del Puerto', external_id: 'ATELIER01' }],
+      registers: [{ id: 42, name: 'Caja Atelier', external_id: 'CAJA01', store_id: 'STORE-1' }],
+      terminals: [{ id: terminalId, operating_mode: 'PDV', store_id: 'STORE-1', pos_id: 42 }],
+    })
+    assert.equal(management.terminals[0].online, null)
+    assert.equal(management.terminals[0].ready, true)
+    assert.equal(management.terminals[0].store.name, 'Atelier del Puerto')
+    assert.equal(management.terminals[0].register.name, 'Caja Atelier')
+    assert.match(management.terminals[0].management_url, /SBX0000001$/)
+    assert.equal(management.stores[0].assigned, true)
+    assert.equal(management.stores[0].register_count, 1)
+    assert.equal(management.registers[0].assigned, true)
 
     const created = await point.createPointOrder(sale)
     assert.equal(created.status, 'created')
@@ -207,7 +224,7 @@ test('built-in Point mock simulates terminal arrival, approval, and cancellation
 
     assert.equal(point.pointConfiguration().configured, true)
     assert.deepEqual(await point.getConfiguredTerminal(), {
-      id: 'MOCK_POINT_SMART_2', operatingMode: 'PDV', connected: true,
+      id: 'MOCK_POINT_SMART_2', operatingMode: 'PDV', connected: true, online: true, ready: true,
     })
     assert.equal((await point.createPointOrder(sale)).status, 'created')
     assert.equal((await point.getPointOrder('MOCK-mock-sale-1', sale)).status, 'at_terminal')

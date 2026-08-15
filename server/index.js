@@ -5,7 +5,7 @@ import compression from 'compression'
 import express from 'express'
 import { authStatus, login, logout, pointAccessIsProtected, requireAuth } from './auth.js'
 import {
-  cancelPointOrder, createPointOrder, createPointPos, createPointStore, deletePointPos, deletePointStore,
+  buildPointManagement, cancelPointOrder, createPointOrder, createPointPos, createPointStore, deletePointPos, deletePointStore,
   getConfiguredTerminal, getMercadoPagoAccount, getPointOrder, getPointPayment, getPointPos, getPointStore,
   listPointPos, listPointStores, listPointTerminals, pointConfiguration, printPointRefundCopy, refundPointOrder,
   setupPointTerminal, updatePointPos, updatePointStore, validatePointWebhook,
@@ -557,7 +557,13 @@ app.get('/api/pos/management', async (_req, res, next) => {
     const [account, stores, registers, terminals] = await Promise.all([
       getMercadoPagoAccount(), listPointStores(), listPointPos(), listPointTerminals(),
     ])
-    res.json({ account, stores: stores.stores, storePaging: stores.paging, registers: registers.registers, registerPaging: registers.paging, terminals: terminals.terminals, terminalPaging: terminals.paging })
+    res.json(buildPointManagement({
+      account,
+      stores: stores.stores,
+      registers: registers.registers,
+      terminals: terminals.terminals,
+      paging: { stores: stores.paging, registers: registers.paging, terminals: terminals.paging },
+    }))
   } catch (error) { next(error) }
 })
 app.get('/api/pos/stores', async (req, res, next) => {
@@ -573,7 +579,19 @@ app.put('/api/pos/stores/:storeId', async (req, res, next) => {
   try { requireMercadoPagoAdmin(); res.json(await updatePointStore(req.params.storeId, cleanPointStoreInput(req.body))) } catch (error) { next(error) }
 })
 app.delete('/api/pos/stores/:storeId', async (req, res, next) => {
-  try { requireMercadoPagoAdmin(); res.json(await deletePointStore(req.params.storeId)) } catch (error) { next(error) }
+  try {
+    requireMercadoPagoAdmin()
+    const [registers, terminals] = await Promise.all([
+      listPointPos({ storeId: req.params.storeId }),
+      listPointTerminals({ storeId: req.params.storeId }),
+    ])
+    const linkedRegisters = registers.registers.filter((register) => String(register.store_id) === String(req.params.storeId))
+    const linkedTerminals = terminals.terminals.filter((terminal) => String(terminal.store_id) === String(req.params.storeId))
+    if (linkedRegisters.length || linkedTerminals.length) {
+      throw Object.assign(new Error('Move or delete the store cash registers before deleting this Mercado Pago store.'), { status: 409 })
+    }
+    res.json(await deletePointStore(req.params.storeId))
+  } catch (error) { next(error) }
 })
 app.get('/api/pos/registers', async (req, res, next) => {
   try {
@@ -591,7 +609,14 @@ app.put('/api/pos/registers/:registerId', async (req, res, next) => {
   try { requireMercadoPagoAdmin(); res.json(await updatePointPos(req.params.registerId, cleanPointPosInput(req.body))) } catch (error) { next(error) }
 })
 app.delete('/api/pos/registers/:registerId', async (req, res, next) => {
-  try { requireMercadoPagoAdmin(); res.json(await deletePointPos(req.params.registerId)) } catch (error) { next(error) }
+  try {
+    requireMercadoPagoAdmin()
+    const terminals = await listPointTerminals({ posId: req.params.registerId })
+    if (terminals.terminals.some((terminal) => String(terminal.pos_id) === String(req.params.registerId))) {
+      throw Object.assign(new Error('Move the Point terminal to another cash register before deleting this one.'), { status: 409 })
+    }
+    res.json(await deletePointPos(req.params.registerId))
+  } catch (error) { next(error) }
 })
 app.get('/api/pos/terminals', async (req, res, next) => {
   try { requireMercadoPagoAdmin(); res.json(await listPointTerminals({ storeId: req.query.store_id, posId: req.query.pos_id, limit: req.query.limit, offset: req.query.offset })) } catch (error) { next(error) }
